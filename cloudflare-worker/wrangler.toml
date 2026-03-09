@@ -1,0 +1,16 @@
+name = "fleetq-get"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+# Custom domain: get.fleetq.net
+# Add this after deploying:
+#   wrangler deploy
+#   Then in Cloudflare dashboard: Workers & Pages → fleetq-get → Custom Domains → add get.fleetq.net
+
+[env.production]
+name = "fleetq-get"
+
+# Routes — uncomment and set your zone ID after first deploy
+# [[routes]]
+# pattern = "get.fleetq.net/*"
+# zone_name = "fleetq.net"
