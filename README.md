@@ -27,7 +27,7 @@ curl -sSL https://get.fleetq.net/bridge | sh
 ```
 
 **Windows**
-Download the installer from [Releases](https://github.com/fleetq/fleetq-bridge/releases).
+Download the installer from [Releases](https://github.com/escapeboy/fleetq-bridge/releases).
 
 ## Quick Start
 
