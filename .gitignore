@@ -1,0 +1,17 @@
+# Binaries
+fleetq-bridge
+dist/
+
+# Go
+*.test
+*.out
+
+# Config (contains sensitive data)
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# GoReleaser
+dist/

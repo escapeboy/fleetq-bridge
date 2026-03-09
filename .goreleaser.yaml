@@ -1,0 +1,77 @@
+version: 2
+
+project_name: fleetq-bridge
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: fleetq-bridge
+    binary: fleetq-bridge
+    main: ./cmd/fleetq-bridge
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    env:
+      - CGO_ENABLED=0  # Phase 1: pure Go (systray added in Phase 2 requires CGO_ENABLED=1)
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/fleetq/fleetq-bridge/internal/version.Version={{.Version}}
+      - -X github.com/fleetq/fleetq-bridge/internal/version.Commit={{.Commit}}
+      - -X github.com/fleetq/fleetq-bridge/internal/version.Date={{.Date}}
+
+# macOS universal binary (amd64 + arm64 merged)
+universal_binaries:
+  - id: fleetq-bridge-universal
+    ids: [fleetq-bridge]
+    replace: true
+    name_template: fleetq-bridge
+
+archives:
+  - id: default
+    format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}macOS
+      {{- else if eq .Os "linux" }}Linux
+      {{- else }}Windows{{ end }}_
+      {{- .Arch }}
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  github:
+    owner: fleetq
+    name: fleetq-bridge
+  draft: false
+  prerelease: auto
+
+# Homebrew tap (Phase 2: add after first release)
+# brews:
+#   - name: fleetq-bridge
+#     repository:
+#       owner: fleetq
+#       name: homebrew-tap
+#     description: "FleetQ local compute gateway"
+#     install: |
+#       bin.install "fleetq-bridge"
+#     service: |
+#       run [opt_bin/"fleetq-bridge", "daemon"]
+#       keep_alive true
