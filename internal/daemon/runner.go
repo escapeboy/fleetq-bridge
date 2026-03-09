@@ -15,6 +15,7 @@ import (
 	"github.com/fleetq/fleetq-bridge/internal/executor"
 	"github.com/fleetq/fleetq-bridge/internal/ipc"
 	"github.com/fleetq/fleetq-bridge/internal/llm"
+	"github.com/fleetq/fleetq-bridge/internal/mcp"
 	"github.com/fleetq/fleetq-bridge/internal/tunnel"
 )
 
@@ -24,15 +25,16 @@ type Runner struct {
 	apiKey string
 	log    *zap.Logger
 
-	mu          sync.RWMutex
+	mu           sync.RWMutex
 	llmEndpoints []discovery.LLMEndpoint
 	agents       []discovery.Agent
-	registry    *executor.Registry
-	startedAt   time.Time
+	registry     *executor.Registry
+	startedAt    time.Time
 
 	tunnelClient *tunnel.Client
 	ipcServer    *ipc.Server
 	llmProxy     *llm.Proxy
+	mcpRegistry  *mcp.Registry
 }
 
 // NewRunner creates a daemon runner.
@@ -60,6 +62,16 @@ func (r *Runner) Run(ctx context.Context) error {
 		r.log.Warn("IPC server failed to start", zap.Error(err))
 	} else {
 		defer r.ipcServer.Stop()
+	}
+
+	// Start MCP servers
+	if len(r.cfg.MCPServers) > 0 {
+		cfgs := make([]mcp.ServerConfig, len(r.cfg.MCPServers))
+		for i, s := range r.cfg.MCPServers {
+			cfgs[i] = mcp.ServerConfig{Name: s.Name, Command: s.Command, Args: s.Args, Env: s.Env}
+		}
+		r.mcpRegistry = mcp.NewRegistry(cfgs, ctx, r.log)
+		defer r.mcpRegistry.StopAll()
 	}
 
 	// Initial discovery
@@ -146,6 +158,9 @@ func (r *Runner) GetManifest() *tunnel.DiscoverManifest {
 			Found:   a.Found,
 			Version: a.Version,
 		})
+	}
+	if r.mcpRegistry != nil {
+		m.MCPServers = r.mcpRegistry.Names()
 	}
 	return m
 }
@@ -254,11 +269,38 @@ func (r *Runner) OnAgentRequest(ctx context.Context, req *tunnel.AgentRequest, s
 	return nil
 }
 
-// OnMCPRequest handles an MCP JSON-RPC request (Phase 2 — stub).
-func (r *Runner) OnMCPRequest(_ context.Context, requestID string, _ []byte, send func(*tunnel.Frame) error) error {
-	errFrame, _ := tunnel.NewJSONFrame(requestID, tunnel.FrameError,
-		&tunnel.ErrorPayload{Code: "not_implemented", Message: "MCP proxy not yet implemented"})
-	return send(errFrame)
+// OnMCPRequest routes an MCP JSON-RPC request to the right local MCP server.
+// The requestID encodes the server name as a prefix: "serverName/uuid".
+func (r *Runner) OnMCPRequest(_ context.Context, requestID string, payload []byte, send func(*tunnel.Frame) error) error {
+	if r.mcpRegistry == nil {
+		errFrame, _ := tunnel.NewJSONFrame(requestID, tunnel.FrameError,
+			&tunnel.ErrorPayload{Code: "no_mcp_servers", Message: "no MCP servers configured"})
+		return send(errFrame)
+	}
+
+	// Extract server name from requestID prefix (format: "name/uuid")
+	serverName := requestID
+	if i := len(requestID); i > 0 {
+		for j, c := range requestID {
+			if c == '/' {
+				serverName = requestID[:j]
+				break
+			}
+		}
+	}
+
+	resp, err := r.mcpRegistry.Handle(serverName, payload)
+	if err != nil {
+		errFrame, _ := tunnel.NewJSONFrame(requestID, tunnel.FrameError,
+			&tunnel.ErrorPayload{Code: "mcp_error", Message: err.Error()})
+		return send(errFrame)
+	}
+
+	f, err := tunnel.NewRawFrame(requestID, tunnel.FrameMCPResponse, resp)
+	if err != nil {
+		return err
+	}
+	return send(f)
 }
 
 // OnRotateKey handles an API key rotation from the relay.
@@ -269,6 +311,11 @@ func (r *Runner) OnRotateKey(_ context.Context, newKey string) {
 	r.mu.Unlock()
 	// Persist to keychain
 	// Note: import cycle avoided — auth package called from CLI layer on restart
+}
+
+// IsConnected returns true if the tunnel is currently connected.
+func (r *Runner) IsConnected() bool {
+	return r.tunnelClient.IsConnected()
 }
 
 // --- IPC ---
@@ -303,6 +350,22 @@ func (r *Runner) buildStatusPayload() *ipc.StatusPayload {
 			Version: a.Version,
 			Found:   a.Found,
 		})
+	}
+	if r.mcpRegistry != nil {
+		for _, s := range r.cfg.MCPServers {
+			running := false
+			for _, name := range r.mcpRegistry.Names() {
+				if name == s.Name {
+					running = true
+					break
+				}
+			}
+			status.MCPServers = append(status.MCPServers, ipc.MCPServerInfo{
+				Name:    s.Name,
+				Command: s.Command,
+				Running: running,
+			})
+		}
 	}
 	return status
 }

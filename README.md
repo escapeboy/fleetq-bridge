@@ -66,7 +66,7 @@ fleetq-bridge status
 | Codex CLI | `codex` |
 
 ### MCP Servers
-Configure in `~/.config/fleetq/bridge.yaml`:
+Configure in `~/.config/fleetq/bridge.yaml`. Servers start automatically with the daemon:
 ```yaml
 mcp_servers:
   - name: filesystem
@@ -75,20 +75,38 @@ mcp_servers:
   - name: playwright
     command: npx
     args: ["-y", "@playwright/mcp"]
+  - name: git
+    command: uvx
+    args: ["mcp-server-git"]
 ```
+
+MCP requests from FleetQ cloud are routed to the matching server by name.
+Use `fleetq-bridge mcp list` to see configured servers.
 
 ## Commands
 
 ```
 fleetq-bridge login --api-key <key>  Authenticate
 fleetq-bridge daemon                 Run in foreground
+fleetq-bridge tui                    Open interactive terminal dashboard
 fleetq-bridge install                Install as system service
 fleetq-bridge uninstall              Remove system service
 fleetq-bridge status                 Show connection status
 fleetq-bridge endpoints list         List discovered endpoints
 fleetq-bridge endpoints probe        Re-probe all endpoints
+fleetq-bridge mcp list               List configured MCP servers
 fleetq-bridge logs                   Show log file path
 ```
+
+## Terminal Dashboard (TUI)
+
+Run `fleetq-bridge tui` for a live terminal dashboard with three tabs:
+
+- **Status** — relay connection state, LLM count, agent count
+- **Endpoints** — per-endpoint online status and model list
+- **Logs** — streaming daemon events
+
+Navigate with `Tab`/`1`–`3`, scroll with `j`/`k`, quit with `q`.
 
 ## Configuration
 

@@ -7,13 +7,14 @@ before:
     - go mod tidy
 
 builds:
+  # Standard cross-compiled builds (no system tray, CGO_ENABLED=0)
   - id: fleetq-bridge
     binary: fleetq-bridge
     main: ./cmd/fleetq-bridge
     goos: [darwin, linux, windows]
     goarch: [amd64, arm64]
     env:
-      - CGO_ENABLED=0  # Phase 1: pure Go (systray added in Phase 2 requires CGO_ENABLED=1)
+      - CGO_ENABLED=0
     flags:
       - -trimpath
     ldflags:
@@ -21,6 +22,24 @@ builds:
       - -X github.com/fleetq/fleetq-bridge/internal/version.Version={{.Version}}
       - -X github.com/fleetq/fleetq-bridge/internal/version.Commit={{.Commit}}
       - -X github.com/fleetq/fleetq-bridge/internal/version.Date={{.Date}}
+
+  # macOS systray build (CGO_ENABLED=1, separate artifact)
+  # Uncomment when macOS codesigning is configured
+  # - id: fleetq-bridge-systray
+  #   binary: fleetq-bridge
+  #   main: ./cmd/fleetq-bridge
+  #   goos: [darwin]
+  #   goarch: [amd64, arm64]
+  #   env:
+  #     - CGO_ENABLED=1
+  #   flags:
+  #     - -trimpath
+  #     - -tags=systray
+  #   ldflags:
+  #     - -s -w
+  #     - -X github.com/fleetq/fleetq-bridge/internal/version.Version={{.Version}}
+  #     - -X github.com/fleetq/fleetq-bridge/internal/version.Commit={{.Commit}}
+  #     - -X github.com/fleetq/fleetq-bridge/internal/version.Date={{.Date}}
 
 # macOS universal binary (amd64 + arm64 merged)
 universal_binaries:

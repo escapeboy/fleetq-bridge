@@ -23,6 +23,8 @@ func NewRootCmd() *cobra.Command {
 		newUninstallCmd(),
 		newLogsCmd(),
 		newEndpointsCmd(),
+		newTUICmd(),
+		newMCPCmd(),
 	)
 
 	return root

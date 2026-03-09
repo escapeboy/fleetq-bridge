@@ -27,8 +27,16 @@ type StatusPayload struct {
 	StartedAt    time.Time `json:"started_at"`
 	LastEventAt  time.Time `json:"last_event_at,omitempty"`
 	Latency      int64     `json:"latency_ms"`
-	LLMEndpoints []LLMEndpointInfo   `json:"llm_endpoints"`
-	Agents       []AgentInfo         `json:"agents"`
+	LLMEndpoints []LLMEndpointInfo `json:"llm_endpoints"`
+	Agents       []AgentInfo       `json:"agents"`
+	MCPServers   []MCPServerInfo   `json:"mcp_servers"`
+}
+
+// MCPServerInfo describes a configured local MCP server.
+type MCPServerInfo struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+	Running bool   `json:"running"`
 }
 
 // LLMEndpointInfo describes a discovered local LLM.

@@ -105,3 +105,12 @@ func NewJSONFrame(requestID string, frameType FrameType, payload any) (*Frame, e
 		Payload:   data,
 	}, nil
 }
+
+// NewRawFrame creates a frame with a raw byte payload.
+func NewRawFrame(requestID string, frameType FrameType, payload []byte) (*Frame, error) {
+	return &Frame{
+		RequestID: requestID,
+		Type:      frameType,
+		Payload:   payload,
+	}, nil
+}

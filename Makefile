@@ -8,10 +8,14 @@ LDFLAGS    := -s -w \
               -X $(MODULE)/internal/version.Commit=$(COMMIT) \
               -X $(MODULE)/internal/version.Date=$(DATE)
 
-.PHONY: build run clean install lint test
+.PHONY: build build-systray run clean install lint test
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/fleetq-bridge
+
+# Build with system tray icon (requires CGO_ENABLED=1 and platform libs)
+build-systray:
+	CGO_ENABLED=1 go build -tags systray -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/fleetq-bridge
 
 run: build
 	./$(BINARY)

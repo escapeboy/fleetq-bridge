@@ -14,6 +14,7 @@ import (
 	"github.com/fleetq/fleetq-bridge/internal/auth"
 	"github.com/fleetq/fleetq-bridge/internal/config"
 	"github.com/fleetq/fleetq-bridge/internal/daemon"
+	"github.com/fleetq/fleetq-bridge/internal/systray"
 )
 
 func newDaemonCmd() *cobra.Command {
@@ -59,6 +60,9 @@ The daemon reconnects automatically on network interruptions.`,
 				log.Info("shutting down")
 				cancel()
 			}()
+
+			// Start system tray icon (no-op if built without -tags systray)
+			go systray.Run(ctx, runner.IsConnected)
 
 			return runner.Run(ctx)
 		},

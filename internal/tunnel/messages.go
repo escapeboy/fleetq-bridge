@@ -51,6 +51,7 @@ type DiscoverManifest struct {
 	BridgeVersion string            `json:"bridge_version"`
 	LLMEndpoints  []LLMEndpointInfo `json:"llm_endpoints"`
 	Agents        []AgentInfo       `json:"agents"`
+	MCPServers    []string          `json:"mcp_servers,omitempty"` // names of running MCP servers
 }
 
 // LLMEndpointInfo describes a local LLM endpoint.
