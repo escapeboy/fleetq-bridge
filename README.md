@@ -18,12 +18,12 @@ FleetQ Cloud ──WSS──► FleetQ Bridge (your machine)
 
 **macOS (Homebrew)**
 ```bash
-brew install fleetq/tap/fleetq-bridge
+brew install escapeboy/tap/fleetq-bridge
 ```
 
 **macOS / Linux (binary)**
 ```bash
-curl -sSL https://get.fleetq.net/bridge | sh
+curl -sSL https://get.fleetq.net | sh
 ```
 
 **Windows**
