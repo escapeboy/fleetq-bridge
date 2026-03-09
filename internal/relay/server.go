@@ -101,20 +101,23 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessionID := fmt.Sprintf("relay-%s-%d", teamID[:8], time.Now().Unix())
+
 	connCtx, cancel := context.WithCancel(context.Background())
 	conn := &Conn{
-		TeamID: teamID,
-		apiKey: apiKey,
-		ws:     ws,
-		send:   make(chan []byte, 64),
-		cancel: cancel,
+		TeamID:    teamID,
+		SessionID: sessionID,
+		apiKey:    apiKey,
+		ws:        ws,
+		send:      make(chan []byte, 64),
+		cancel:    cancel,
 	}
 
 	s.hub.Register(conn)
 	s.log.Info("bridge connected", zap.String("team_id", teamID))
 
 	// Notify Laravel of the new connection
-	go s.registerConnection(teamID, apiKey)
+	go s.registerConnection(sessionID, apiKey)
 
 	defer func() {
 		cancel()
@@ -164,7 +167,7 @@ func (s *Server) handleFrame(ctx context.Context, conn *Conn, frame *tunnel.Fram
 
 	case tunnel.FrameDiscover:
 		// Update endpoints in Laravel
-		go s.updateEndpoints(conn.TeamID, conn.apiKey, frame.Payload)
+		go s.updateEndpoints(conn, frame.Payload)
 		// Send ack
 		ack := &tunnel.Frame{Type: tunnel.FrameDiscoverAck, RequestID: frame.RequestID}
 		return conn.SendFrame(ack)
@@ -304,9 +307,9 @@ func (s *Server) resolveTeam(ctx context.Context, apiKey string) (string, error)
 }
 
 // registerConnection notifies Laravel that a bridge connected.
-func (s *Server) registerConnection(teamID, apiKey string) {
+func (s *Server) registerConnection(sessionID, apiKey string) {
 	body := map[string]any{
-		"session_id":     fmt.Sprintf("relay-%s-%d", teamID[:8], time.Now().Unix()),
+		"session_id":     sessionID,
 		"bridge_version": "relay/1.0",
 	}
 	s.apiCall(apiKey, "POST", "/api/v1/bridge/register", body)
@@ -318,18 +321,21 @@ func (s *Server) unregisterConnection(teamID, apiKey string) {
 }
 
 // updateEndpoints sends the discover manifest to Laravel.
-func (s *Server) updateEndpoints(teamID, apiKey string, payload []byte) {
+func (s *Server) updateEndpoints(conn *Conn, payload []byte) {
 	var manifest tunnel.DiscoverManifest
 	if err := json.Unmarshal(payload, &manifest); err != nil {
 		return
 	}
 
 	body := map[string]any{
-		"llm_endpoints": manifest.LLMEndpoints,
-		"agents":        manifest.Agents,
-		"mcp_servers":   manifest.MCPServers,
+		"session_id": conn.SessionID,
+		"endpoints": map[string]any{
+			"llm_endpoints": manifest.LLMEndpoints,
+			"agents":        manifest.Agents,
+			"mcp_servers":   manifest.MCPServers,
+		},
 	}
-	s.apiCall(apiKey, "POST", "/api/v1/bridge/endpoints", body)
+	s.apiCall(conn.apiKey, "POST", "/api/v1/bridge/endpoints", body)
 }
 
 // apiCall makes an authenticated POST/DELETE call to the FleetQ API.
