@@ -16,7 +16,7 @@ func newLogsCmd() *cobra.Command {
 		Short: "Show the bridge log file path",
 		Long:  "Prints the log file path. Use 'tail -f <path>' to follow logs.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+			cfg, err := config.LoadFrom(configFile)
 			if err != nil {
 				return err
 			}

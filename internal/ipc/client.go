@@ -15,12 +15,17 @@ type Client struct {
 	enc  *json.Encoder
 }
 
-// Dial connects to the daemon IPC socket.
+// Dial connects to the default daemon IPC socket.
 func Dial(ctx context.Context) (*Client, error) {
+	return DialAt(ctx, SocketPathFor(""))
+}
+
+// DialAt connects to the daemon IPC socket at the given path.
+func DialAt(ctx context.Context, socketPath string) (*Client, error) {
 	var d net.Dialer
-	conn, err := d.DialContext(ctx, "unix", SocketPath())
+	conn, err := d.DialContext(ctx, "unix", socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("daemon not running (could not connect to %s): %w", SocketPath(), err)
+		return nil, fmt.Errorf("daemon not running (could not connect to %s): %w", socketPath, err)
 	}
 	return &Client{
 		conn: conn,

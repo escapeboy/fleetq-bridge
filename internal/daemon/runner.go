@@ -38,7 +38,8 @@ type Runner struct {
 }
 
 // NewRunner creates a daemon runner.
-func NewRunner(cfg *config.Config, apiKey string, log *zap.Logger) *Runner {
+// socketPath is the IPC socket path; use ipc.SocketPathFor(configPath) to derive it.
+func NewRunner(cfg *config.Config, apiKey string, log *zap.Logger, socketPath string) *Runner {
 	r := &Runner{
 		cfg:       cfg,
 		apiKey:    apiKey,
@@ -47,7 +48,7 @@ func NewRunner(cfg *config.Config, apiKey string, log *zap.Logger) *Runner {
 		llmProxy:  llm.NewProxy(),
 	}
 	r.tunnelClient = tunnel.NewClient(cfg.RelayURL, apiKey, r, log)
-	r.ipcServer = ipc.NewServer(r.buildStatusPayload)
+	r.ipcServer = ipc.NewServer(r.buildStatusPayload, socketPath)
 	return r
 }
 

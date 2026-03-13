@@ -73,18 +73,31 @@ func Default() *Config {
 	}
 }
 
-// Path returns the config file path.
+// Path returns the default config file path.
 func Path() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "fleetq", "bridge.yaml")
 }
 
-// Load reads the config file, returning defaults if not found.
-func Load() (*Config, error) {
-	cfg := Default()
-	path := Path()
+// Resolve returns path if non-empty, otherwise the default path.
+func Resolve(path string) string {
+	if path != "" {
+		return path
+	}
+	return Path()
+}
 
-	data, err := os.ReadFile(path)
+// Load reads the default config file, returning defaults if not found.
+func Load() (*Config, error) {
+	return LoadFrom("")
+}
+
+// LoadFrom reads the config file at path (empty = default), returning defaults if not found.
+func LoadFrom(path string) (*Config, error) {
+	cfg := Default()
+	p := Resolve(path)
+
+	data, err := os.ReadFile(p)
 	if os.IsNotExist(err) {
 		return cfg, nil
 	}
@@ -98,15 +111,20 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the config to disk.
+// Save writes the config to the default path.
 func Save(cfg *Config) error {
-	path := Path()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+	return SaveTo("", cfg)
+}
+
+// SaveTo writes the config to path (empty = default).
+func SaveTo(path string, cfg *Config) error {
+	p := Resolve(path)
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return os.WriteFile(p, data, 0600)
 }

@@ -23,7 +23,7 @@ func newStatusCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 
-			client, err := ipc.Dial(ctx)
+			client, err := ipc.DialAt(ctx, ipc.SocketPathFor(configFile))
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "daemon not running:", err)
 				os.Exit(1)

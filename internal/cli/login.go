@@ -34,10 +34,14 @@ func newLoginCmd() *cobra.Command {
 				return fmt.Errorf("invalid API key: %w", err)
 			}
 
-			cfg, err := config.Load()
+			cfg, err := config.LoadFrom(configFile)
 			if err != nil {
 				return err
 			}
+
+			// Show which config file is being written
+			cfgPath := config.Resolve(configFile)
+			fmt.Printf("Config: %s\n", cfgPath)
 
 			// Override api_url and derive relay_url when --api-url is provided
 			if apiURL != "" {
@@ -60,7 +64,7 @@ func newLoginCmd() *cobra.Command {
 			if err := auth.Store(apiKey); err != nil {
 				// Fall back to config file
 				cfg.APIKey = apiKey
-				if saveErr := config.Save(cfg); saveErr != nil {
+				if saveErr := config.SaveTo(configFile, cfg); saveErr != nil {
 					return fmt.Errorf("failed to store API key: keychain error: %v; config error: %v", err, saveErr)
 				}
 				fmt.Println("Note: stored API key in config file (keychain unavailable)")
@@ -68,15 +72,19 @@ func newLoginCmd() *cobra.Command {
 				fmt.Println("API key stored in OS keychain.")
 				// Persist api_url / relay_url changes even when key is in keychain
 				if apiURL != "" {
-					if saveErr := config.Save(cfg); saveErr != nil {
+					if saveErr := config.SaveTo(configFile, cfg); saveErr != nil {
 						return fmt.Errorf("failed to save config: %w", saveErr)
 					}
 				}
 			}
 
+				cfgFlag := ""
+			if configFile != "" {
+				cfgFlag = " --config " + configFile
+			}
 			fmt.Println("\nNext steps:")
-			fmt.Println("  fleetq-bridge install   # install as auto-start service")
-			fmt.Println("  fleetq-bridge daemon    # run in foreground")
+			fmt.Printf("  fleetq-bridge%s install   # install as auto-start service\n", cfgFlag)
+			fmt.Printf("  fleetq-bridge%s daemon    # run in foreground\n", cfgFlag)
 			return nil
 		},
 	}

@@ -4,16 +4,27 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 )
 
-// SocketPath returns the platform-specific IPC socket path.
-func SocketPath() string {
-	if runtime.GOOS == "windows" {
-		return `\\.\pipe\fleetq-bridge`
+// SocketPathFor returns the platform-specific IPC socket path derived from
+// the config file path. An empty configPath uses the default socket.
+//
+//	~/.config/fleetq/bridge.yaml      →  /tmp/fleetq-bridge.sock      (default)
+//	~/.config/fleetq/bridge-local.yaml →  /tmp/fleetq-bridge-local.sock
+func SocketPathFor(configPath string) string {
+	stem := "bridge"
+	if configPath != "" {
+		base := filepath.Base(configPath)
+		stem = strings.TrimSuffix(base, filepath.Ext(base))
 	}
-	return "/tmp/fleetq-bridge.sock"
+	if runtime.GOOS == "windows" {
+		return `\\.\pipe\fleetq-` + stem
+	}
+	return "/tmp/fleetq-" + stem + ".sock"
 }
 
 // Server is the IPC server run inside the daemon.
@@ -22,24 +33,25 @@ type Server struct {
 	listener    net.Listener
 	subscribers []net.Conn
 	statusFn    func() *StatusPayload
+	socketPath  string
 }
 
 // NewServer creates a new IPC server.
-func NewServer(statusFn func() *StatusPayload) *Server {
-	return &Server{statusFn: statusFn}
+// socketPath is the Unix socket path; use SocketPathFor(configPath) to derive it.
+func NewServer(statusFn func() *StatusPayload, socketPath string) *Server {
+	return &Server{statusFn: statusFn, socketPath: socketPath}
 }
 
 // Start begins listening on the IPC socket.
 func (s *Server) Start() error {
-	path := SocketPath()
-	os.Remove(path)
+	os.Remove(s.socketPath)
 
 	var err error
-	s.listener, err = net.Listen("unix", path)
+	s.listener, err = net.Listen("unix", s.socketPath)
 	if err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := os.Chmod(s.socketPath, 0600); err != nil {
 		return err
 	}
 
@@ -52,7 +64,7 @@ func (s *Server) Stop() {
 	if s.listener != nil {
 		s.listener.Close()
 	}
-	os.Remove(SocketPath())
+	os.Remove(s.socketPath)
 }
 
 // Push sends an event to all subscribers.

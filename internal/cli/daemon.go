@@ -14,6 +14,7 @@ import (
 	"github.com/fleetq/fleetq-bridge/internal/auth"
 	"github.com/fleetq/fleetq-bridge/internal/config"
 	"github.com/fleetq/fleetq-bridge/internal/daemon"
+	"github.com/fleetq/fleetq-bridge/internal/ipc"
 	"github.com/fleetq/fleetq-bridge/internal/systray"
 )
 
@@ -30,7 +31,7 @@ When installed as a system service, logs go to the configured log file.
 
 The daemon reconnects automatically on network interruptions.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+			cfg, err := config.LoadFrom(configFile)
 			if err != nil {
 				return fmt.Errorf("config error: %w", err)
 			}
@@ -47,7 +48,7 @@ The daemon reconnects automatically on network interruptions.`,
 			log := buildLogger(cfg.LogLevel)
 			defer log.Sync() //nolint:errcheck
 
-			runner := daemon.NewRunner(cfg, apiKey, log)
+			runner := daemon.NewRunner(cfg, apiKey, log, ipc.SocketPathFor(configFile))
 
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
