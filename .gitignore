@@ -1,5 +1,8 @@
 # Binaries
 fleetq-bridge
+fleetq-bridge-*
+fleetq-relay
+fleetq-relay-*
 dist/
 
 # Go
