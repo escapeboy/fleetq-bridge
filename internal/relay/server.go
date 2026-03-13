@@ -116,8 +116,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.hub.Register(conn)
 	s.log.Info("bridge connected", zap.String("team_id", teamID))
 
-	// Notify Laravel of the new connection
-	go s.registerConnection(sessionID, apiKey)
+	// Notify Laravel of the new connection synchronously before starting readLoop.
+	// This ensures the DB record exists before any FrameDiscover frames are processed,
+	// avoiding a race where updateEndpoints cannot find the connection and falls through
+	// to the Redis-pending path while registerConnection concurrently reads stale data.
+	s.registerConnection(sessionID, apiKey)
 
 	defer func() {
 		cancel()
@@ -326,13 +329,15 @@ func (s *Server) updateEndpoints(conn *Conn, payload []byte) {
 	if err := json.Unmarshal(payload, &manifest); err != nil {
 		return
 	}
+	s.log.Info("updateEndpoints", zap.Int("agents", len(manifest.Agents)), zap.Int("ide_mcp", len(manifest.IDEMCPConfigs)))
 
 	body := map[string]any{
 		"session_id": conn.SessionID,
 		"endpoints": map[string]any{
-			"llm_endpoints": manifest.LLMEndpoints,
-			"agents":        manifest.Agents,
-			"mcp_servers":   manifest.MCPServers,
+			"llm_endpoints":   manifest.LLMEndpoints,
+			"agents":          manifest.Agents,
+			"mcp_servers":     manifest.MCPServers,
+			"ide_mcp_configs": manifest.IDEMCPConfigs,
 		},
 	}
 	s.apiCall(conn.apiKey, "POST", "/api/v1/bridge/endpoints", body)

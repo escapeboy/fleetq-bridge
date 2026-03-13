@@ -25,11 +25,12 @@ type Runner struct {
 	apiKey string
 	log    *zap.Logger
 
-	mu           sync.RWMutex
-	llmEndpoints []discovery.LLMEndpoint
-	agents       []discovery.Agent
-	registry     *executor.Registry
-	startedAt    time.Time
+	mu             sync.RWMutex
+	llmEndpoints   []discovery.LLMEndpoint
+	agents         []discovery.Agent
+	ideMCPConfigs  []discovery.MCPServerConfig
+	registry       *executor.Registry
+	startedAt      time.Time
 
 	tunnelClient *tunnel.Client
 	ipcServer    *ipc.Server
@@ -108,11 +109,13 @@ func (r *Runner) discoveryLoop(ctx context.Context) {
 func (r *Runner) discover(ctx context.Context) {
 	llms := discovery.DiscoverLLMs(ctx)
 	agents := discovery.DiscoverAgents(ctx, r.cfg.Agents.Enabled)
+	ideMCP := discovery.DiscoverIDEMCPConfigs()
 	registry := executor.NewRegistry(agents)
 
 	r.mu.Lock()
 	r.llmEndpoints = llms
 	r.agents = agents
+	r.ideMCPConfigs = ideMCP
 	r.registry = registry
 	r.mu.Unlock()
 
@@ -132,6 +135,7 @@ func (r *Runner) discover(ctx context.Context) {
 	r.log.Info("discovery complete",
 		zap.Int("llms_online", online),
 		zap.Int("agents_found", found),
+		zap.Int("ide_mcp_configs", len(ideMCP)),
 	)
 }
 
@@ -162,6 +166,16 @@ func (r *Runner) GetManifest() *tunnel.DiscoverManifest {
 	}
 	if r.mcpRegistry != nil {
 		m.MCPServers = r.mcpRegistry.Names()
+	}
+	for _, cfg := range r.ideMCPConfigs {
+		m.IDEMCPConfigs = append(m.IDEMCPConfigs, tunnel.MCPServerInfo{
+			Name:    cfg.Name,
+			Source:  cfg.Source,
+			Command: cfg.Command,
+			Args:    cfg.Args,
+			Env:     cfg.Env,
+			URL:     cfg.URL,
+		})
 	}
 	return m
 }

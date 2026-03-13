@@ -48,10 +48,21 @@ type AgentEvent struct {
 
 // DiscoverManifest is sent by the bridge to announce its capabilities.
 type DiscoverManifest struct {
-	BridgeVersion string            `json:"bridge_version"`
-	LLMEndpoints  []LLMEndpointInfo `json:"llm_endpoints"`
-	Agents        []AgentInfo       `json:"agents"`
-	MCPServers    []string          `json:"mcp_servers,omitempty"` // names of running MCP servers
+	BridgeVersion  string            `json:"bridge_version"`
+	LLMEndpoints   []LLMEndpointInfo `json:"llm_endpoints"`
+	Agents         []AgentInfo       `json:"agents"`
+	MCPServers     []string          `json:"mcp_servers,omitempty"`      // names of running (bridge-managed) MCP servers
+	IDEMCPConfigs  []MCPServerInfo   `json:"ide_mcp_configs,omitempty"` // full configs from IDE config files
+}
+
+// MCPServerInfo describes a discovered MCP server from a host IDE config file.
+type MCPServerInfo struct {
+	Name    string            `json:"name"`
+	Source  string            `json:"source"` // e.g. "Claude Desktop"
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
 }
 
 // LLMEndpointInfo describes a local LLM endpoint.
