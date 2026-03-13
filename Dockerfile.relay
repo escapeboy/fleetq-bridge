@@ -1,0 +1,14 @@
+FROM golang:1.23-alpine AS build
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /fleetq-relay ./cmd/fleetq-relay
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates wget
+COPY --from=build /fleetq-relay /usr/local/bin/fleetq-relay
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+    CMD wget -qO- http://localhost:8070/bridge/health || exit 1
+EXPOSE 8070
+ENTRYPOINT ["fleetq-relay"]

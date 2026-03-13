@@ -14,8 +14,9 @@ const (
 
 // Config holds all bridge configuration.
 type Config struct {
-	RelayURL string    `yaml:"relay_url"`
-	APIKey   string    `yaml:"api_key"` // fallback if keychain unavailable
+	RelayURL string `yaml:"relay_url"`
+	APIURL   string `yaml:"api_url"`  // base URL of the FleetQ instance (e.g. https://myfleetq.example.com)
+	APIKey   string `yaml:"api_key"`  // fallback if keychain unavailable
 
 	Discovery DiscoveryConfig `yaml:"discovery"`
 	Agents    AgentConfig     `yaml:"agents"`
