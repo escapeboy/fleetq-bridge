@@ -99,11 +99,21 @@ func parseGeminiEvent(requestID string, raw map[string]any) *Event {
 
 	switch eventType {
 	case "message":
-		// Find text in content
+		// Only emit assistant messages
+		role, _ := raw["role"].(string)
+		if role != "assistant" {
+			return nil
+		}
+
+		// Find text in content — gemini CLI emits content as a plain string,
+		// but handle the Anthropic array format too for forward compatibility.
 		var sb strings.Builder
-		if content, ok := raw["content"].([]any); ok {
-			for _, c := range content {
-				if m, ok := c.(map[string]any); ok {
+		switch c := raw["content"].(type) {
+		case string:
+			sb.WriteString(c)
+		case []any:
+			for _, item := range c {
+				if m, ok := item.(map[string]any); ok {
 					if m["type"] == "text" {
 						if t, ok := m["text"].(string); ok {
 							sb.WriteString(t)
@@ -112,7 +122,7 @@ func parseGeminiEvent(requestID string, raw map[string]any) *Event {
 				}
 			}
 		}
-		// Direct text field fallback
+		// Direct "text" field fallback
 		if sb.Len() == 0 {
 			if t, ok := raw["text"].(string); ok {
 				sb.WriteString(t)
@@ -123,7 +133,9 @@ func parseGeminiEvent(requestID string, raw map[string]any) *Event {
 		}
 
 	case "result":
-		// Final result from --output-format json mode
+		// Gemini CLI stream-json: {"type":"result","status":"success",...}
+		// Text has already been emitted via message events; just signal done.
+		// Also handle --output-format json mode with response.text.
 		if resp, ok := raw["response"].(map[string]any); ok {
 			if text, ok := resp["text"].(string); ok && text != "" {
 				return &Event{RequestID: requestID, Kind: "output", Text: text}

@@ -78,13 +78,17 @@ func (e *CodexExecutor) Execute(ctx context.Context, req *Request, out io.Writer
 func parseCodexEvent(requestID string, raw map[string]any) *Event {
 	eventType, _ := raw["type"].(string)
 	switch eventType {
-	case "item.completed", "turn.completed":
-		// Extract text output from items
+	case "item.completed":
+		// Extract text output from items — codex emits "text" field (not "content")
 		if item, ok := raw["item"].(map[string]any); ok {
-			if content, ok := item["content"].(string); ok && content != "" {
-				return &Event{RequestID: requestID, Kind: "output", Text: content}
+			for _, field := range []string{"text", "content"} {
+				if t, ok := item[field].(string); ok && t != "" {
+					return &Event{RequestID: requestID, Kind: "output", Text: t}
+				}
 			}
 		}
+	case "turn.completed":
+		// No text in turn.completed; just marks the end of a turn
 	case "error":
 		msg, _ := raw["message"].(string)
 		return &Event{RequestID: requestID, Kind: "error", Error: msg}
