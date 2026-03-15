@@ -36,6 +36,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
+		"--verbose",
 		"--dangerously-skip-permissions",
 	}
 	if req.Model != "" {
@@ -52,8 +53,14 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 		cmd.Dir = req.WorkingDirectory
 	}
 
-	// Propagate env overrides
-	cmd.Env = os.Environ()
+	// Build environment: start from current env, drop CLAUDECODE (prevents nested-session
+	// detection when the bridge itself runs inside a Claude Code session), then apply overrides.
+	cmd.Env = make([]string, 0, len(os.Environ()))
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "CLAUDECODE=") {
+			cmd.Env = append(cmd.Env, e)
+		}
+	}
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -68,7 +75,10 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 
 	enc := json.NewEncoder(out)
 	scanner := bufio.NewScanner(stdout)
+	// Increase buffer to 1 MB — claude-code can emit large JSON lines (tool outputs, etc.).
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
+	outputEmitted := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
@@ -80,8 +90,11 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 			continue
 		}
 
-		event := parseClaudeEvent(req.ID, raw)
+		event := parseClaudeEvent(req.ID, raw, outputEmitted)
 		if event != nil {
+			if event.Kind == "output" {
+				outputEmitted = true
+			}
 			if err := enc.Encode(event); err != nil {
 				return err
 			}
@@ -104,12 +117,14 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 }
 
 // parseClaudeEvent translates a Claude Code stream-json line into our Event type.
-func parseClaudeEvent(requestID string, raw map[string]any) *Event {
+// outputEmitted indicates whether any output events have already been produced for this request,
+// used to prevent duplicate content when both assistant messages and the result event carry text.
+func parseClaudeEvent(requestID string, raw map[string]any, outputEmitted bool) *Event {
 	msgType, _ := raw["type"].(string)
 
 	switch msgType {
 	case "assistant":
-		// Extract text from content blocks
+		// Extract text from content blocks (older claude-code / stream-json format)
 		msg, _ := raw["message"].(map[string]any)
 		if msg == nil {
 			return nil
@@ -132,8 +147,38 @@ func parseClaudeEvent(requestID string, raw map[string]any) *Event {
 		}
 		return &Event{RequestID: requestID, Kind: "output", Text: sb.String()}
 
+	case "stream_event":
+		// Claude Code 2.1+ wraps incremental events in a stream_event envelope.
+		// Unwrap and extract text from content_block_delta events.
+		inner, _ := raw["event"].(map[string]any)
+		if inner == nil {
+			return nil
+		}
+		if inner["type"] != "content_block_delta" {
+			return nil
+		}
+		delta, _ := inner["delta"].(map[string]any)
+		if delta == nil {
+			return nil
+		}
+		if delta["type"] == "text_delta" {
+			if t, ok := delta["text"].(string); ok && t != "" {
+				return &Event{RequestID: requestID, Kind: "output", Text: t}
+			}
+		}
+		return nil
+
 	case "result":
-		return &Event{RequestID: requestID, Kind: "done"}
+		// claude-code emits {"type":"result","result":"full answer text",...} as the final event.
+		// Use its text only when no prior output was captured from assistant/stream_event events,
+		// to avoid duplicating content that was already streamed incrementally.
+		if !outputEmitted {
+			if result, ok := raw["result"].(string); ok && result != "" {
+				return &Event{RequestID: requestID, Kind: "output", Text: result}
+			}
+		}
+		// The executor always sends its own final "done" event below — return nil here.
+		return nil
 
 	case "error":
 		msg, _ := raw["message"].(string)
