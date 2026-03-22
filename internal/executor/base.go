@@ -22,7 +22,7 @@ type Request struct {
 // Event is a streaming response event from an agent.
 type Event struct {
 	RequestID string `json:"request_id"`
-	Kind      string `json:"kind"` // "output", "error", "done"
+	Kind      string `json:"kind"` // "output", "progress", "error", "done"
 	Text      string `json:"text,omitempty"`
 	ExitCode  int    `json:"exit_code,omitempty"`
 	Error     string `json:"error,omitempty"`

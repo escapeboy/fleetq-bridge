@@ -185,6 +185,22 @@ func parseClaudeEvent(requestID string, raw map[string]any, outputEmitted bool) 
 		// The executor always sends its own final "done" event below — return nil here.
 		return nil
 
+	case "system":
+		// System init events — emit progress to keep the connection alive.
+		return &Event{RequestID: requestID, Kind: "progress", Text: "initializing"}
+
+	case "tool_use":
+		// Claude Code is invoking a tool — emit progress to prevent upstream timeout.
+		toolName, _ := raw["tool"].(string)
+		if toolName == "" {
+			toolName, _ = raw["name"].(string)
+		}
+		return &Event{RequestID: requestID, Kind: "progress", Text: "tool: " + toolName}
+
+	case "tool_result":
+		// Tool completed — emit progress.
+		return &Event{RequestID: requestID, Kind: "progress", Text: "tool_result"}
+
 	case "error":
 		msg, _ := raw["message"].(string)
 		return &Event{RequestID: requestID, Kind: "error", Error: msg}
