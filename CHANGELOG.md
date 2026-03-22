@@ -7,6 +7,43 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.4.0] — 2026-03-22
+
+### Added
+
+- **IDE MCP config discovery** — automatically detects MCP server configurations from Claude Code (`~/.claude.json`), Cursor (`.cursor/mcp.json`), and Windsurf (`~/.codeium/windsurf/mcp_config.json`). Discovered configs are sent to FleetQ cloud alongside local MCP servers.
+- **Purpose-aware agent execution** — agents receive a `purpose` field from the relay. When purpose is `platform_assistant`, Claude Code's built-in tools are disabled so it relies exclusively on FleetQ MCP tools.
+
+### Fixed
+
+- **WebSocket read limit** — increased from 32 KB to 10 MB to handle large agent request payloads (e.g. assistant system prompts with full tool schemas).
+- **Claude Code stream-json parsing** — updated for Claude Code 2.1.74+ which changed the streaming event format.
+- **Gemini/Codex CLI output format** — executor now handles updated JSON output structure from recent CLI versions.
+
+### Changed
+
+- **Race-free connection registration** — relay server now registers the connection synchronously before starting the read loop, preventing a race where `updateEndpoints` could not find the connection record.
+
+---
+
+## [0.3.0] — 2026-03-13
+
+### Added
+
+- **`--config` flag** — all commands accept `--config <path>` to support multiple bridge instances with separate config files.
+- **`--api-url` login flag** — specify the FleetQ server URL directly during login.
+- **Relay server Dockerfile** — containerized relay server with CI workflow for building images.
+- **Install script** — `curl -sSL https://get.fleetq.net | sh` for quick installation.
+- **Cloudflare Worker** — serves the install script at `get.fleetq.net/bridge`.
+
+### Fixed
+
+- **Session ID race** — fixed race condition where endpoints were sent before the session was registered, causing them to be lost.
+- **Endpoints format** — corrected the JSON structure to match Laravel's expected nested format (`endpoints.agents`, `endpoints.llm_endpoints`, `endpoints.mcp_servers`).
+- **Team ID parsing** — relay now correctly reads `current_team.id` from the `/me` API response.
+
+---
+
 ## [0.2.0] — 2026-03-09
 
 ### Added
