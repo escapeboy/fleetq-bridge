@@ -45,6 +45,11 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 	if req.SystemPrompt != "" {
 		args = append(args, "--system-prompt", req.SystemPrompt)
 	}
+	if req.Purpose == "platform_assistant" {
+		// Disable built-in tools so the agent relies exclusively on FleetQ MCP tools.
+		// The system prompt instructs it to use only mcp__fleetq__* tools.
+		args = append(args, "--tools", "")
+	}
 
 	cmd := exec.CommandContext(ctx, e.binaryPath, args...)
 	cmd.Stdin = strings.NewReader(req.Prompt)

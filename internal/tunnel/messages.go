@@ -31,6 +31,7 @@ type AgentRequest struct {
 	Prompt           string            `json:"prompt"`
 	SystemPrompt     string            `json:"system_prompt,omitempty"`
 	Model            string            `json:"model,omitempty"`
+	Purpose          string            `json:"purpose,omitempty"`
 	WorkingDirectory string            `json:"working_directory,omitempty"`
 	TimeoutSeconds   int               `json:"timeout_seconds,omitempty"`
 	Env              map[string]string `json:"env,omitempty"`

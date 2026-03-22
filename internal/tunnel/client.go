@@ -125,6 +125,10 @@ func (c *Client) connect(ctx context.Context) error {
 	}
 	defer conn.CloseNow()
 
+	// Increase read limit to 10 MB — the default 32 KB is too small for
+	// large agent request payloads (e.g. assistant system prompts with tool schemas).
+	conn.SetReadLimit(10 * 1024 * 1024)
+
 	c.mu.Lock()
 	c.conn = conn
 	c.connected = true

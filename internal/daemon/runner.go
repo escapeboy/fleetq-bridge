@@ -232,6 +232,7 @@ func (r *Runner) OnAgentRequest(ctx context.Context, req *tunnel.AgentRequest, s
 		Prompt:           req.Prompt,
 		SystemPrompt:     req.SystemPrompt,
 		Model:            req.Model,
+		Purpose:          req.Purpose,
 		WorkingDirectory: req.WorkingDirectory,
 		TimeoutSeconds:   req.TimeoutSeconds,
 		Env:              req.Env,
