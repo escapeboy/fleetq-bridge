@@ -24,6 +24,22 @@ type Handler interface {
 	GetManifest() *DiscoverManifest
 }
 
+const (
+	// heartbeatInterval is how often we send heartbeat pings.
+	// 15s keeps the connection alive below Cloudflare's 100s idle timeout.
+	heartbeatInterval = 15 * time.Second
+
+	// heartbeatAckTimeout: if no ack arrives within this window, the connection is dead.
+	heartbeatAckTimeout = 45 * time.Second
+
+	// readTimeout: maximum time to wait for any data on the WebSocket.
+	// Heartbeats arrive every 15s and get ack'd, so 90s means ~6 missed heartbeat cycles.
+	readTimeout = 90 * time.Second
+
+	// writeTimeout: maximum time for a single WebSocket write.
+	writeTimeout = 10 * time.Second
+)
+
 // Client manages the outbound WebSocket connection to the FleetQ relay.
 type Client struct {
 	relayURL string
@@ -32,12 +48,13 @@ type Client struct {
 	handler  Handler
 
 	mu   sync.Mutex
-	conn *websocket.Conn
+	conn *websocket.Conn // current active connection (nil when disconnected)
 
-	connected    bool
-	connectedAt  time.Time
-	lastEventAt  time.Time
-	latencyMs    int64
+	connected        bool
+	connectedAt      time.Time
+	lastEventAt      time.Time
+	latencyMs        int64
+	lastHeartbeatAck time.Time
 }
 
 // NewClient creates a new tunnel client.
@@ -108,6 +125,28 @@ func (c *Client) ConnectedAt() time.Time {
 	return c.connectedAt
 }
 
+// Send sends a frame via the current active connection.
+// Safe to call from any goroutine — resolves conn dynamically so that
+// long-running agent handlers survive WebSocket reconnections.
+func (c *Client) Send(f *Frame) error {
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("not connected")
+	}
+
+	var buf bytes.Buffer
+	if err := f.Encode(&buf); err != nil {
+		return err
+	}
+
+	writeCtx, cancel := context.WithTimeout(context.Background(), writeTimeout)
+	defer cancel()
+	return conn.Write(writeCtx, websocket.MessageBinary, buf.Bytes())
+}
+
 func (c *Client) connect(ctx context.Context) error {
 	c.log.Info("connecting to relay", zap.String("url", c.relayURL))
 
@@ -117,13 +156,12 @@ func (c *Client) connect(ctx context.Context) error {
 	conn, _, err := websocket.Dial(dialCtx, c.relayURL, &websocket.DialOptions{
 		HTTPHeader: http.Header{
 			"Authorization": []string{"Bearer " + c.apiKey},
-			"User-Agent":    []string{"fleetq-bridge/1.0"},
+			"User-Agent":    []string{"fleetq-bridge/1.1"},
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("dial failed: %w", err)
 	}
-	defer conn.CloseNow()
 
 	// Increase read limit to 10 MB — the default 32 KB is too small for
 	// large agent request payloads (e.g. assistant system prompts with tool schemas).
@@ -133,23 +171,37 @@ func (c *Client) connect(ctx context.Context) error {
 	c.conn = conn
 	c.connected = true
 	c.connectedAt = time.Now()
+	c.lastHeartbeatAck = time.Now()
 	c.mu.Unlock()
 
 	c.log.Info("connected to relay")
+
+	// Clean up: clear conn reference when this connection ends, but only
+	// if it hasn't already been replaced by a newer connection.
+	defer func() {
+		c.mu.Lock()
+		if c.conn == conn {
+			c.conn = nil
+		}
+		c.mu.Unlock()
+		conn.CloseNow()
+	}()
 
 	// Send initial capability manifest
 	if err := c.sendManifest(ctx, conn); err != nil {
 		return fmt.Errorf("failed to send manifest: %w", err)
 	}
 
-	// Start heartbeat goroutine
+	// Start heartbeat goroutine (tied to THIS connection)
 	heartbeatCtx, cancelHB := context.WithCancel(ctx)
 	defer cancelHB()
 	go c.heartbeat(heartbeatCtx, conn)
 
-	// Read loop
+	// Read loop with per-read timeout
 	for {
-		_, data, err := conn.Read(ctx)
+		readCtx, readCancel := context.WithTimeout(ctx, readTimeout)
+		_, data, err := conn.Read(readCtx)
+		readCancel()
 		if err != nil {
 			return err
 		}
@@ -164,11 +216,9 @@ func (c *Client) connect(ctx context.Context) error {
 			continue
 		}
 
-		sendFn := func(f *Frame) error {
-			return c.sendFrame(ctx, conn, f)
-		}
-
-		if err := c.dispatch(ctx, frame, sendFn); err != nil {
+		// Dispatch uses c.Send() (dynamic conn), NOT a captured conn reference.
+		// The parent ctx (from Run) is passed so handlers survive reconnections.
+		if err := c.dispatch(ctx, frame); err != nil {
 			c.log.Warn("frame dispatch error", zap.Error(err),
 				zap.String("request_id", frame.RequestID),
 				zap.Uint16("frame_type", uint16(frame.Type)))
@@ -176,32 +226,41 @@ func (c *Client) connect(ctx context.Context) error {
 	}
 }
 
-func (c *Client) dispatch(ctx context.Context, frame *Frame, send func(*Frame) error) error {
+func (c *Client) dispatch(ctx context.Context, frame *Frame) error {
+	// sendFn uses c.Send() which dynamically resolves the current connection.
+	// This is the key fix: when a connection drops and reconnects, handlers
+	// that are still running (e.g. agent executors) will automatically use
+	// the new connection instead of writing to a dead one.
+	sendFn := func(f *Frame) error {
+		return c.Send(f)
+	}
+
 	switch frame.Type {
 	case FrameLLMRequest:
 		var req LLMRequest
 		if err := json.Unmarshal(frame.Payload, &req); err != nil {
 			return err
 		}
-		go c.handler.OnLLMRequest(ctx, &req, send) //nolint:errcheck
+		go c.handler.OnLLMRequest(ctx, &req, sendFn) //nolint:errcheck
 
 	case FrameAgentRequest:
 		var req AgentRequest
 		if err := json.Unmarshal(frame.Payload, &req); err != nil {
 			return err
 		}
-		go c.handler.OnAgentRequest(ctx, &req, send) //nolint:errcheck
+		go c.handler.OnAgentRequest(ctx, &req, sendFn) //nolint:errcheck
 
 	case FrameMCPRequest:
-		go c.handler.OnMCPRequest(ctx, frame.RequestID, frame.Payload, send) //nolint:errcheck
+		go c.handler.OnMCPRequest(ctx, frame.RequestID, frame.Payload, sendFn) //nolint:errcheck
 
 	case FrameHeartbeatAck:
 		start, _ := unmarshalTimestamp(frame.Payload)
+		c.mu.Lock()
+		c.lastHeartbeatAck = time.Now()
 		if !start.IsZero() {
-			c.mu.Lock()
 			c.latencyMs = time.Since(start).Milliseconds()
-			c.mu.Unlock()
 		}
+		c.mu.Unlock()
 
 	case FrameRotateKey:
 		var rk RotateKeyPayload
@@ -218,7 +277,10 @@ func (c *Client) sendFrame(ctx context.Context, conn *websocket.Conn, frame *Fra
 	if err := frame.Encode(&buf); err != nil {
 		return err
 	}
-	return conn.Write(ctx, websocket.MessageBinary, buf.Bytes())
+
+	writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	return conn.Write(writeCtx, websocket.MessageBinary, buf.Bytes())
 }
 
 func (c *Client) sendManifest(ctx context.Context, conn *websocket.Conn) error {
@@ -231,7 +293,7 @@ func (c *Client) sendManifest(ctx context.Context, conn *websocket.Conn) error {
 }
 
 func (c *Client) heartbeat(ctx context.Context, conn *websocket.Conn) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(heartbeatInterval)
 	defer ticker.Stop()
 
 	for {
@@ -239,6 +301,18 @@ func (c *Client) heartbeat(ctx context.Context, conn *websocket.Conn) {
 		case <-ctx.Done():
 			return
 		case t := <-ticker.C:
+			// Check heartbeat ack timeout — if no ack in 45s, connection is dead
+			c.mu.Lock()
+			lastAck := c.lastHeartbeatAck
+			c.mu.Unlock()
+
+			if time.Since(lastAck) > heartbeatAckTimeout {
+				c.log.Warn("heartbeat ack timeout, closing connection",
+					zap.Duration("since_last_ack", time.Since(lastAck)))
+				conn.Close(websocket.StatusGoingAway, "heartbeat timeout")
+				return
+			}
+
 			payload, _ := json.Marshal(map[string]int64{"ts": t.UnixMilli()})
 			frame := &Frame{Type: FrameHeartbeat, Payload: payload}
 			if err := c.sendFrame(ctx, conn, frame); err != nil {

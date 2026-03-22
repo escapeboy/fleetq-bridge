@@ -253,7 +253,11 @@ func (r *Runner) OnAgentRequest(ctx context.Context, req *tunnel.AgentRequest, s
 		}
 	}()
 
-	// Stream events back to relay
+	// Stream events back to relay.
+	// Send errors are non-fatal: the connection may drop and reconnect,
+	// and send() dynamically resolves the current connection. We skip
+	// failed sends (events are lost) but keep streaming so that the next
+	// event may succeed on the new connection.
 	dec := json.NewDecoder(pr)
 	for {
 		var event executor.Event
@@ -276,7 +280,19 @@ func (r *Runner) OnAgentRequest(ctx context.Context, req *tunnel.AgentRequest, s
 			break
 		}
 		if err := send(f); err != nil {
-			break
+			r.log.Warn("send failed, will retry on next event",
+				zap.String("request_id", req.RequestID),
+				zap.String("kind", event.Kind),
+				zap.Error(err))
+			// Don't break — keep reading events so we can send them
+			// once the connection is re-established.
+			if event.Kind == "done" {
+				// Final event: retry once after a brief pause
+				time.Sleep(2 * time.Second)
+				_ = send(f)
+				break
+			}
+			continue
 		}
 		if event.Kind == "done" {
 			break

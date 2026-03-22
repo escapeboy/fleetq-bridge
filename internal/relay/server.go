@@ -143,7 +143,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // readLoop reads frames from the daemon and handles them.
 func (s *Server) readLoop(ctx context.Context, conn *Conn) error {
 	for {
-		_, data, err := conn.ws.Read(ctx)
+		// Read timeout slightly below nginx's proxy_read_timeout (300s).
+		// The bridge sends heartbeats every 15s, so we should always receive
+		// data well within this window. If not, the connection is truly dead.
+		readCtx, readCancel := context.WithTimeout(ctx, 270*time.Second)
+		_, data, err := conn.ws.Read(readCtx)
+		readCancel()
 		if err != nil {
 			return err
 		}
@@ -191,7 +196,11 @@ func (s *Server) writeLoop(ctx context.Context, conn *Conn) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case data := <-conn.send:
-			if err := conn.ws.Write(ctx, websocket.MessageBinary, data); err != nil {
+			// Write timeout prevents blocking indefinitely on dead TCP sockets.
+			writeCtx, writeCancel := context.WithTimeout(ctx, 10*time.Second)
+			err := conn.ws.Write(writeCtx, websocket.MessageBinary, data)
+			writeCancel()
+			if err != nil {
 				return err
 			}
 		}
