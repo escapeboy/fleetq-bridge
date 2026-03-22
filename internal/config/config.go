@@ -32,9 +32,10 @@ type DiscoveryConfig struct {
 }
 
 type AgentConfig struct {
-	Enabled          []string `yaml:"enabled"`
-	WorkingDirectory string   `yaml:"working_directory"`
-	TimeoutSeconds   int      `yaml:"timeout_seconds"`
+	Enabled          []string          `yaml:"enabled"`
+	WorkingDirectory string            `yaml:"working_directory"`
+	TimeoutSeconds   int               `yaml:"timeout_seconds"`
+	BinaryPaths      map[string]string `yaml:"binary_paths"` // explicit binary paths — overrides PATH lookup
 }
 
 type MCPServer struct {

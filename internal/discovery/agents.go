@@ -2,19 +2,21 @@ package discovery
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 // AgentDef defines how to detect a local AI agent binary.
 type AgentDef struct {
-	Key           string // internal key, e.g. "claude-code"
-	DisplayName   string // human-readable name
-	Binary        string // the binary to look up in PATH
-	VersionArgs   []string
-	OutputFormat  string // "stream-json", "json", "text", "acp"
-	RequiresPTY   bool   // Cursor CLI TTY bug
+	Key          string // internal key, e.g. "claude-code"
+	DisplayName  string // human-readable name
+	Binary       string // the binary to look up in PATH
+	VersionArgs  []string
+	OutputFormat string // "stream-json", "json", "text", "acp"
+	RequiresPTY  bool   // Cursor CLI TTY bug
 }
 
 // Agent is a detected agent binary with its resolved version.
@@ -86,8 +88,25 @@ var KnownAgents = []AgentDef{
 	},
 }
 
+// commonBinDirs are searched when exec.LookPath fails due to a minimal process PATH.
+// This handles the case where bridge is started via SSH or other mechanism with a restricted PATH.
+var commonBinDirs = []string{
+	"/opt/homebrew/bin",   // macOS Homebrew (Apple Silicon)
+	"/usr/local/bin",      // macOS Homebrew (Intel) / Linux
+	"/usr/local/homebrew/bin",
+}
+
+func init() {
+	// Also include ~/.local/bin from the actual user home.
+	if home, err := os.UserHomeDir(); err == nil {
+		commonBinDirs = append(commonBinDirs, filepath.Join(home, ".local", "bin"), filepath.Join(home, "bin"))
+	}
+}
+
 // DiscoverAgents probes all known agent binaries and returns their detection results.
-func DiscoverAgents(ctx context.Context, enabled []string) []Agent {
+// binaryPaths is an optional map of agent key → explicit binary path that takes priority
+// over PATH-based discovery (e.g. from bridge.yaml agents.binary_paths config).
+func DiscoverAgents(ctx context.Context, enabled []string, binaryPaths map[string]string) []Agent {
 	enabledSet := make(map[string]bool, len(enabled))
 	for _, k := range enabled {
 		enabledSet[k] = true
@@ -99,19 +118,47 @@ func DiscoverAgents(ctx context.Context, enabled []string) []Agent {
 			results = append(results, Agent{AgentDef: def})
 			continue
 		}
-		results = append(results, probeAgent(ctx, def))
+		results = append(results, probeAgent(ctx, def, binaryPaths[def.Key]))
 	}
 	return results
 }
 
-func probeAgent(ctx context.Context, def AgentDef) Agent {
+func probeAgent(ctx context.Context, def AgentDef, explicitPath string) Agent {
 	a := Agent{AgentDef: def}
 
-	path, err := exec.LookPath(def.Binary)
-	if err != nil {
+	var binPath string
+
+	if explicitPath != "" {
+		// Explicit config path — use if file exists and is executable.
+		if _, err := os.Stat(explicitPath); err == nil {
+			binPath = explicitPath
+		}
+	}
+
+	if binPath == "" {
+		// Try PATH lookup first.
+		if p, err := exec.LookPath(def.Binary); err == nil {
+			binPath = p
+		}
+	}
+
+	if binPath == "" {
+		// PATH lookup failed — probe common install directories directly.
+		// This handles bridge started via SSH/nohup with a minimal PATH.
+		for _, dir := range commonBinDirs {
+			candidate := filepath.Join(dir, def.Binary)
+			if _, err := os.Stat(candidate); err == nil {
+				binPath = candidate
+				break
+			}
+		}
+	}
+
+	if binPath == "" {
 		return a
 	}
-	a.Path = path
+
+	a.Path = binPath
 	a.Found = true
 
 	// Get version with a short timeout.
@@ -122,7 +169,7 @@ func probeAgent(ctx context.Context, def AgentDef) Agent {
 	if len(args) == 0 {
 		args = []string{"--version"}
 	}
-	out, err := exec.CommandContext(vCtx, path, args...).Output()
+	out, err := exec.CommandContext(vCtx, binPath, args...).Output()
 	if err == nil {
 		a.Version = strings.TrimSpace(firstLine(string(out)))
 	}

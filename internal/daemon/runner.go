@@ -108,9 +108,9 @@ func (r *Runner) discoveryLoop(ctx context.Context) {
 
 func (r *Runner) discover(ctx context.Context) {
 	llms := discovery.DiscoverLLMs(ctx)
-	agents := discovery.DiscoverAgents(ctx, r.cfg.Agents.Enabled)
+	agents := discovery.DiscoverAgents(ctx, r.cfg.Agents.Enabled, r.cfg.Agents.BinaryPaths)
 	ideMCP := discovery.DiscoverIDEMCPConfigs()
-	registry := executor.NewRegistry(agents)
+	registry := executor.NewRegistry(agents, r.cfg.MCPServers)
 
 	r.mu.Lock()
 	r.llmEndpoints = llms

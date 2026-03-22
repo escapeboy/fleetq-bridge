@@ -45,7 +45,7 @@ func newEndpointsListCmd() *cobra.Command {
 			fmt.Println("(Daemon not running — probing directly)")
 			ctx2 := context.Background()
 			llms := discovery.DiscoverLLMs(ctx2)
-			agents := discovery.DiscoverAgents(ctx2, nil)
+			agents := discovery.DiscoverAgents(ctx2, nil, nil)
 
 			fmt.Println("\nLocal LLMs:")
 			for _, ep := range llms {
@@ -88,7 +88,7 @@ func newEndpointsProbeCmd() *cobra.Command {
 				}
 			}
 
-			agents := discovery.DiscoverAgents(ctx, nil)
+			agents := discovery.DiscoverAgents(ctx, nil, nil)
 			foundCount := 0
 			for _, a := range agents {
 				if a.Found {

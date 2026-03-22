@@ -11,17 +11,22 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/fleetq/fleetq-bridge/internal/config"
 )
 
 // ClaudeExecutor executes tasks via the Claude Code CLI.
 // Uses: claude -p --output-format stream-json --dangerously-skip-permissions
 type ClaudeExecutor struct {
 	binaryPath string
+	mcpServers []config.MCPServer // injected into Claude Code via --mcp-config
 }
 
 // NewClaudeExecutor creates a new executor for Claude Code.
-func NewClaudeExecutor(binaryPath string) *ClaudeExecutor {
-	return &ClaudeExecutor{binaryPath: binaryPath}
+// mcpServers are the bridge-configured MCP servers that will be made available
+// to every Claude Code subprocess via a generated --mcp-config file.
+func NewClaudeExecutor(binaryPath string, mcpServers []config.MCPServer) *ClaudeExecutor {
+	return &ClaudeExecutor{binaryPath: binaryPath, mcpServers: mcpServers}
 }
 
 func (e *ClaudeExecutor) Key() string { return "claude-code" }
@@ -50,6 +55,19 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 		// Disable built-in tools so the agent relies exclusively on FleetQ MCP tools.
 		// The system prompt instructs it to use only mcp__fleetq__* tools.
 		args = append(args, "--tools", "")
+	}
+
+	// Auto-inject bridge MCP servers via --mcp-config so Claude Code subprocesses
+	// have access to bridge-managed MCP servers (playwright, filesystem, etc.)
+	// without requiring manual configuration by the user.
+	if len(e.mcpServers) > 0 {
+		mcpPath, err := writeTempMCPConfig(e.mcpServers)
+		if err != nil {
+			log.Printf("[executor] failed to write MCP config: %v request=%s", err, req.ID)
+		} else {
+			defer os.Remove(mcpPath)
+			args = append(args, "--mcp-config", mcpPath)
+		}
 	}
 
 	cmd := exec.CommandContext(ctx, e.binaryPath, args...)
@@ -138,6 +156,57 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 	})
 }
 
+// writeTempMCPConfig writes a Claude Code --mcp-config JSON file to a temp path
+// containing all provided bridge MCP servers. Returns the temp file path.
+func writeTempMCPConfig(servers []config.MCPServer) (string, error) {
+	type mcpServerEntry struct {
+		Type    string            `json:"type"`
+		Command string            `json:"command"`
+		Args    []string          `json:"args,omitempty"`
+		Env     map[string]string `json:"env,omitempty"`
+	}
+	type mcpConfig struct {
+		MCPServers map[string]mcpServerEntry `json:"mcpServers"`
+	}
+
+	cfg := mcpConfig{MCPServers: make(map[string]mcpServerEntry, len(servers))}
+	for _, s := range servers {
+		if s.Command == "" {
+			continue
+		}
+		entry := mcpServerEntry{
+			Type:    "stdio",
+			Command: s.Command,
+			Args:    s.Args,
+		}
+		if len(s.Env) > 0 {
+			entry.Env = make(map[string]string, len(s.Env))
+			for _, kv := range s.Env {
+				if i := strings.IndexByte(kv, '='); i > 0 {
+					entry.Env[kv[:i]] = kv[i+1:]
+				}
+			}
+		}
+		cfg.MCPServers[s.Name] = entry
+	}
+
+	if len(cfg.MCPServers) == 0 {
+		return "", fmt.Errorf("no valid MCP servers to write")
+	}
+
+	f, err := os.CreateTemp("", "fleetq-mcp-*.json")
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	if err := json.NewEncoder(f).Encode(cfg); err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
+
 // parseClaudeEvent translates a Claude Code stream-json line into our Event type.
 // outputEmitted indicates whether any output events have already been produced for this request,
 // used to prevent duplicate content when both assistant messages and the result event carry text.
@@ -205,7 +274,7 @@ func parseClaudeEvent(requestID string, raw map[string]any, outputEmitted bool) 
 		return nil
 
 	case "result":
-		// claude-code emits {"type":"result","result":"full answer text",...} as the final event.
+		// claude-code emits {\"type\":\"result\",\"result\":\"full answer text\",...} as the final event.
 		// Always emit the result text as a "result" kind event (distinct from "output") so
 		// that the consumer receives the complete final answer regardless of prior streaming.
 		if result, ok := raw["result"].(string); ok && result != "" {

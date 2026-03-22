@@ -1,6 +1,9 @@
 package executor
 
-import "github.com/fleetq/fleetq-bridge/internal/discovery"
+import (
+	"github.com/fleetq/fleetq-bridge/internal/config"
+	"github.com/fleetq/fleetq-bridge/internal/discovery"
+)
 
 // Registry maps agent keys to their executors.
 type Registry struct {
@@ -8,7 +11,8 @@ type Registry struct {
 }
 
 // NewRegistry builds an executor registry from the discovered agents.
-func NewRegistry(agents []discovery.Agent) *Registry {
+// mcpServers are the bridge-configured MCP servers injected into Claude Code subprocesses.
+func NewRegistry(agents []discovery.Agent, mcpServers []config.MCPServer) *Registry {
 	r := &Registry{executors: make(map[string]Executor)}
 	for _, a := range agents {
 		if !a.Found {
@@ -17,7 +21,7 @@ func NewRegistry(agents []discovery.Agent) *Registry {
 		var ex Executor
 		switch a.Key {
 		case "claude-code":
-			ex = NewClaudeExecutor(a.Path)
+			ex = NewClaudeExecutor(a.Path, mcpServers)
 		case "gemini":
 			ex = NewGeminiExecutor(a.Path)
 		case "opencode":
