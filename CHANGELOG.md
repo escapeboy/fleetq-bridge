@@ -7,6 +7,21 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.0] — 2026-03-22
+
+### Added
+
+- **Redis key prefix support** — relay server now reads `REDIS_PREFIX` env var and prepends it to all Redis keys (`bridge:req:*`, `bridge:stream:*`), ensuring correct key resolution when Laravel uses a prefix on its bridge Redis connection.
+- **Executor diagnostic logging** — Claude Code executor logs process PID, line counts, event kinds, and scanner errors to stderr for production debugging.
+- **Debug-level event tracing** — runner logs streaming events at DEBUG level for troubleshooting without noise in production.
+- **stderr passthrough** — Claude Code subprocess stderr is forwarded to the bridge daemon log for visibility into agent errors.
+
+### Fixed
+
+- **Claude Code authentication in LaunchAgent context** — bridge daemon running under macOS LaunchAgent now has keychain access, enabling Claude Code OAuth session tokens to work correctly. Previously, running via SSH `nohup` lacked keychain context and claude-code exited with "Not logged in".
+
+---
+
 ## [0.4.0] — 2026-03-22
 
 ### Added

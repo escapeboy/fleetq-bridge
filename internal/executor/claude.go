@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -74,9 +75,11 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 	if err != nil {
 		return err
 	}
+	cmd.Stderr = os.Stderr // Ensure claude-code stderr goes to bridge log
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start claude: %w", err)
 	}
+	log.Printf("[executor] claude started pid=%d request=%s", cmd.Process.Pid, req.ID)
 
 	enc := json.NewEncoder(out)
 	scanner := bufio.NewScanner(stdout)
@@ -84,27 +87,37 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 
 	outputEmitted := false
+	lineCount := 0
 	for scanner.Scan() {
 		line := scanner.Text()
 		if line == "" {
 			continue
 		}
+		lineCount++
+		log.Printf("[executor] line %d len=%d request=%s", lineCount, len(line), req.ID)
 
 		var raw map[string]any
 		if err := json.Unmarshal([]byte(line), &raw); err != nil {
+			log.Printf("[executor] json parse error: %v request=%s", err, req.ID)
 			continue
 		}
 
 		event := parseClaudeEvent(req.ID, raw, outputEmitted)
 		if event != nil {
+			log.Printf("[executor] event kind=%s request=%s", event.Kind, req.ID)
 			if event.Kind == "output" {
 				outputEmitted = true
 			}
 			if err := enc.Encode(event); err != nil {
+				log.Printf("[executor] encode error: %v request=%s", err, req.ID)
 				return err
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[executor] scanner error: %v request=%s", err, req.ID)
+	}
+	log.Printf("[executor] scanner done lines=%d request=%s", lineCount, req.ID)
 
 	exitErr := cmd.Wait()
 	exitCode := 0

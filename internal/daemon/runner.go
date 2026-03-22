@@ -259,11 +259,14 @@ func (r *Runner) OnAgentRequest(ctx context.Context, req *tunnel.AgentRequest, s
 	// failed sends (events are lost) but keep streaming so that the next
 	// event may succeed on the new connection.
 	dec := json.NewDecoder(pr)
+	r.log.Debug("streaming events", zap.String("request_id", req.RequestID))
 	for {
 		var event executor.Event
 		if err := dec.Decode(&event); err != nil {
+			r.log.Debug("event stream ended", zap.String("request_id", req.RequestID), zap.Error(err))
 			break
 		}
+		r.log.Debug("event received", zap.String("request_id", req.RequestID), zap.String("kind", event.Kind))
 		frameType := tunnel.FrameAgentEvent
 		if event.Kind == "done" {
 			frameType = tunnel.FrameAgentDone

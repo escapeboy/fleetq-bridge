@@ -18,6 +18,7 @@ import (
 func main() {
 	apiURL := getenv("FLEETQ_API_URL", "https://fleetq.net")
 	redisURL := buildRedisURL()
+	redisPrefix := getenv("REDIS_PREFIX", "")
 	listen := getenv("RELAY_LISTEN", ":8070")
 	logLevel := getenv("LOG_LEVEL", "info")
 
@@ -25,8 +26,9 @@ func main() {
 	defer logger.Sync() //nolint:errcheck
 
 	srv, err := relay.NewServer(relay.Config{
-		APIURL:   apiURL,
-		RedisURL: redisURL,
+		APIURL:      apiURL,
+		RedisURL:    redisURL,
+		RedisPrefix: redisPrefix,
 	}, logger)
 	if err != nil {
 		log.Fatalf("relay init: %v", err)

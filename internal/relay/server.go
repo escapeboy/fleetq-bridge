@@ -19,8 +19,9 @@ import (
 
 // Config holds relay server configuration.
 type Config struct {
-	APIURL   string // e.g. "https://fleetq.net"
-	RedisURL string // e.g. "redis://redis:6379/0"
+	APIURL      string // e.g. "https://fleetq.net"
+	RedisURL    string // e.g. "redis://redis:6379/0"
+	RedisPrefix string // e.g. "fleetq-" — prepended to all Redis keys (must match Laravel's REDIS_PREFIX)
 }
 
 // Server is the HTTP/WebSocket relay server.
@@ -209,7 +210,7 @@ func (s *Server) writeLoop(ctx context.Context, conn *Conn) error {
 
 // redisPump polls Redis for requests queued for this team and sends them to the daemon.
 func (s *Server) redisPump(ctx context.Context, conn *Conn) error {
-	key := fmt.Sprintf("bridge:req:%s", conn.TeamID)
+	key := fmt.Sprintf("%sbridge:req:%s", s.cfg.RedisPrefix, conn.TeamID)
 
 	// Use a dedicated Redis connection for BLPOP to avoid pool exhaustion
 	rdb := s.rdb.Conn()
@@ -272,7 +273,7 @@ func (s *Server) pushResponse(ctx context.Context, frame *tunnel.Frame) error {
 		return err
 	}
 
-	key := fmt.Sprintf("bridge:stream:%s", frame.RequestID)
+	key := fmt.Sprintf("%sbridge:stream:%s", s.cfg.RedisPrefix, frame.RequestID)
 	pipe := s.rdb.Pipeline()
 	pipe.RPush(ctx, key, data)
 	pipe.Expire(ctx, key, 120*time.Second)
