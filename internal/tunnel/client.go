@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -153,10 +154,22 @@ func (c *Client) connect(ctx context.Context) error {
 	dialCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
+	// Use a custom dialer with TCP keepalive so the OS sends keepalive probes
+	// every 30s. This prevents home routers and cloud NAT tables from silently
+	// dropping the idle TCP connection between heartbeat exchanges.
+	netDialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}
 	conn, _, err := websocket.Dial(dialCtx, c.relayURL, &websocket.DialOptions{
 		HTTPHeader: http.Header{
 			"Authorization": []string{"Bearer " + c.apiKey},
 			"User-Agent":    []string{"fleetq-bridge/1.1"},
+		},
+		HTTPClient: &http.Client{
+			Transport: &http.Transport{
+				DialContext: netDialer.DialContext,
+			},
 		},
 	})
 	if err != nil {

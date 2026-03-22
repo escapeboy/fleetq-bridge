@@ -7,6 +7,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.2] — 2026-03-22
+
+### Fixed
+
+- **TCP keepalive** — bridge client now uses a custom `net.Dialer` with `KeepAlive: 30s` when dialing the relay WebSocket. This causes the OS to send TCP keepalive probes every 30 seconds, preventing home routers and cloud NAT tables from silently dropping idle connections between heartbeat frames.
+
+---
+
 ## [0.5.1] — 2026-03-22
 
 ### Fixed
