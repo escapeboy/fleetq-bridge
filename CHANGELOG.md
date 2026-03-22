@@ -7,6 +7,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.1] — 2026-03-22
+
+### Fixed
+
+- **Claude Code event parser** — `assistant` messages with only `tool_use` content blocks now emit `progress` events instead of being silently dropped. Previously 90%+ of claude-code stream-json lines were discarded, making agent tool usage invisible to the platform.
+- **Result event always emitted** — the final `result` event from claude-code is now always forwarded (as kind `"result"`) regardless of whether prior `output` events were captured. Previously the complete agent answer was lost when streaming had already produced partial output.
+- **New event type handlers** — added handlers for `user` (tool result feedback) and `rate_limit_event` (silently ignored) event types to eliminate "skipped" log noise.
+
+---
+
 ## [0.5.0] — 2026-03-22
 
 ### Added

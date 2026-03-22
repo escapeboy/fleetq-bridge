@@ -103,6 +103,10 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 		}
 
 		event := parseClaudeEvent(req.ID, raw, outputEmitted)
+		if event == nil {
+			msgType, _ := raw["type"].(string)
+			log.Printf("[executor] skipped type=%s request=%s", msgType, req.ID)
+		}
 		if event != nil {
 			log.Printf("[executor] event kind=%s request=%s", event.Kind, req.ID)
 			if event.Kind == "output" {
@@ -142,28 +146,42 @@ func parseClaudeEvent(requestID string, raw map[string]any, outputEmitted bool) 
 
 	switch msgType {
 	case "assistant":
-		// Extract text from content blocks (older claude-code / stream-json format)
+		// Extract text and tool_use info from content blocks.
+		// Claude Code 2.1+ emits assistant messages with mixed content:
+		// text blocks (narrative), tool_use blocks (tool invocations).
 		msg, _ := raw["message"].(map[string]any)
 		if msg == nil {
 			return nil
 		}
 		content, _ := msg["content"].([]any)
 		var sb strings.Builder
+		var hasToolUse bool
+		var lastToolName string
 		for _, block := range content {
 			b, ok := block.(map[string]any)
 			if !ok {
 				continue
 			}
-			if b["type"] == "text" {
+			switch b["type"] {
+			case "text":
 				if t, ok := b["text"].(string); ok {
 					sb.WriteString(t)
 				}
+			case "tool_use":
+				hasToolUse = true
+				if name, ok := b["name"].(string); ok {
+					lastToolName = name
+				}
 			}
 		}
-		if sb.Len() == 0 {
-			return nil
+		if sb.Len() > 0 {
+			return &Event{RequestID: requestID, Kind: "output", Text: sb.String()}
 		}
-		return &Event{RequestID: requestID, Kind: "output", Text: sb.String()}
+		// No text but has tool_use — emit progress so upstream knows agent is working.
+		if hasToolUse {
+			return &Event{RequestID: requestID, Kind: "progress", Text: "tool: " + lastToolName}
+		}
+		return nil
 
 	case "stream_event":
 		// Claude Code 2.1+ wraps incremental events in a stream_event envelope.
@@ -188,14 +206,11 @@ func parseClaudeEvent(requestID string, raw map[string]any, outputEmitted bool) 
 
 	case "result":
 		// claude-code emits {"type":"result","result":"full answer text",...} as the final event.
-		// Use its text only when no prior output was captured from assistant/stream_event events,
-		// to avoid duplicating content that was already streamed incrementally.
-		if !outputEmitted {
-			if result, ok := raw["result"].(string); ok && result != "" {
-				return &Event{RequestID: requestID, Kind: "output", Text: result}
-			}
+		// Always emit the result text as a "result" kind event (distinct from "output") so
+		// that the consumer receives the complete final answer regardless of prior streaming.
+		if result, ok := raw["result"].(string); ok && result != "" {
+			return &Event{RequestID: requestID, Kind: "result", Text: result}
 		}
-		// The executor always sends its own final "done" event below — return nil here.
 		return nil
 
 	case "system":
@@ -213,6 +228,14 @@ func parseClaudeEvent(requestID string, raw map[string]any, outputEmitted bool) 
 	case "tool_result":
 		// Tool completed — emit progress.
 		return &Event{RequestID: requestID, Kind: "progress", Text: "tool_result"}
+
+	case "user":
+		// Tool result feedback — emit progress to keep connection alive.
+		return &Event{RequestID: requestID, Kind: "progress", Text: "tool_result"}
+
+	case "rate_limit_event":
+		// Rate limit info — ignore silently.
+		return nil
 
 	case "error":
 		msg, _ := raw["message"].(string)
