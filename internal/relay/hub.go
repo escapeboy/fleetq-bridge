@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/fleetq/fleetq-bridge/internal/tunnel"
@@ -21,6 +22,10 @@ type Conn struct {
 }
 
 // SendFrame encodes a frame and queues it for delivery.
+// Uses a 2s blocking timeout so heartbeat acks are not silently dropped when
+// the writeLoop is momentarily busy (e.g. writing a large agent request frame).
+// Returns an error only after the timeout, allowing callers to decide whether
+// to close the connection.
 func (c *Conn) SendFrame(frame *tunnel.Frame) error {
 	var buf bytes.Buffer
 	if err := frame.Encode(&buf); err != nil {
@@ -29,7 +34,7 @@ func (c *Conn) SendFrame(frame *tunnel.Frame) error {
 	select {
 	case c.send <- buf.Bytes():
 		return nil
-	default:
+	case <-time.After(2 * time.Second):
 		return fmt.Errorf("send buffer full for team %s", c.TeamID)
 	}
 }

@@ -31,7 +31,8 @@ const (
 	heartbeatInterval = 15 * time.Second
 
 	// heartbeatAckTimeout: if no ack arrives within this window, the connection is dead.
-	heartbeatAckTimeout = 45 * time.Second
+	// 90s = 6 missed heartbeat cycles — tolerates transient relay backpressure.
+	heartbeatAckTimeout = 90 * time.Second
 
 	// readTimeout: maximum time to wait for any data on the WebSocket.
 	// Heartbeats arrive every 15s and get ack'd, so 90s means ~6 missed heartbeat cycles.
