@@ -132,22 +132,33 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Three concurrent goroutines: read, write, and Redis pump
-	errCh := make(chan error, 3)
+	type result struct {
+		loop string
+		err  error
+	}
+	resCh := make(chan result, 3)
 
-	go func() { errCh <- s.readLoop(connCtx, conn) }()
-	go func() { errCh <- s.writeLoop(connCtx, conn) }()
-	go func() { errCh <- s.redisPump(connCtx, conn) }()
+	go func() { resCh <- result{"read", s.readLoop(connCtx, conn)} }()
+	go func() { resCh <- result{"write", s.writeLoop(connCtx, conn)} }()
+	go func() { resCh <- result{"redis", s.redisPump(connCtx, conn)} }()
 
-	<-errCh // first error closes everything
+	res := <-resCh // first loop to exit closes everything
+	if res.err != nil && connCtx.Err() == nil {
+		s.log.Warn("connection loop exited",
+			zap.String("team_id", teamID),
+			zap.String("loop", res.loop),
+			zap.Error(res.err))
+	}
 }
 
 // readLoop reads frames from the daemon and handles them.
 func (s *Server) readLoop(ctx context.Context, conn *Conn) error {
 	for {
-		// Read timeout slightly below nginx's proxy_read_timeout (300s).
-		// The bridge sends heartbeats every 15s, so we should always receive
-		// data well within this window. If not, the connection is truly dead.
-		readCtx, readCancel := context.WithTimeout(ctx, 270*time.Second)
+		// Read timeout: 3 heartbeat cycles (15s each) + margin.
+		// Bridge sends heartbeats every 15s so we should receive data every cycle.
+		// 45s = 3 missed heartbeats → detect dead connections quickly rather than
+		// waiting 270s and leaving a stale handler blocking the team slot.
+		readCtx, readCancel := context.WithTimeout(ctx, 45*time.Second)
 		_, data, err := conn.ws.Read(readCtx)
 		readCancel()
 		if err != nil {
