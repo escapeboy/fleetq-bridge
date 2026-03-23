@@ -330,6 +330,10 @@ func (c *Client) heartbeat(ctx context.Context, conn *websocket.Conn) {
 			payload, _ := json.Marshal(map[string]int64{"ts": t.UnixMilli()})
 			frame := &Frame{Type: FrameHeartbeat, Payload: payload}
 			if err := c.sendFrame(ctx, conn, frame); err != nil {
+				// Close the connection so the read loop detects the failure
+				// immediately instead of waiting up to readTimeout (90s).
+				c.log.Warn("heartbeat send failed, closing connection", zap.Error(err))
+				conn.Close(websocket.StatusGoingAway, "heartbeat send failed")
 				return
 			}
 		}
