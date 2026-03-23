@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fleetq/fleetq-bridge/internal/config"
+	"github.com/fleetq/fleetq-bridge/internal/logutil"
 )
 
 // ClaudeExecutor executes tasks via the Claude Code CLI.
@@ -93,7 +94,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 	if err != nil {
 		return err
 	}
-	cmd.Stderr = os.Stderr // Ensure claude-code stderr goes to bridge log
+	cmd.Stderr = logutil.NewRedactingWriter(os.Stderr) // Redact sensitive tokens before logging
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start claude: %w", err)
 	}

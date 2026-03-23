@@ -14,6 +14,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 
+	"github.com/fleetq/fleetq-bridge/internal/logutil"
 	"github.com/fleetq/fleetq-bridge/internal/tunnel"
 )
 
@@ -89,7 +90,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	teamID, err := s.resolveTeam(r.Context(), apiKey)
 	if err != nil {
-		s.log.Warn("auth failed", zap.Error(err))
+		s.log.Warn("auth failed", zap.Error(err), logutil.RedactedString("api_key", apiKey))
 		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}

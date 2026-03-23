@@ -220,11 +220,23 @@ func (r *Runner) OnAgentRequest(ctx context.Context, req *tunnel.AgentRequest, s
 		return sendError(req.RequestID, "not_ready", "discovery not complete", send)
 	}
 
-	ex := reg.Get(req.AgentKey)
+	router := executor.NewRouter(reg, executor.DefaultRules())
+	ex, ruleName := router.Resolve(&executor.Request{
+		AgentKey: req.AgentKey,
+		Model:    req.Model,
+		Purpose:  req.Purpose,
+	})
+	if ex == nil {
+		// Fallback: direct agent key lookup (preserves existing behaviour).
+		ex = reg.Get(req.AgentKey)
+		ruleName = "fallback"
+	}
 	if ex == nil {
 		return sendError(req.RequestID, "agent_not_found",
 			fmt.Sprintf("agent %q not found or not installed", req.AgentKey), send)
 	}
+	r.log.Debug("agent routed", zap.String("request_id", req.RequestID),
+		zap.String("agent", req.AgentKey), zap.String("rule", ruleName))
 
 	exReq := &executor.Request{
 		ID:               req.RequestID,
