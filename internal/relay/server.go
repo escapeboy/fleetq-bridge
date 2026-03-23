@@ -155,11 +155,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // readLoop reads frames from the daemon and handles them.
 func (s *Server) readLoop(ctx context.Context, conn *Conn) error {
 	for {
-		// Read timeout: 3 heartbeat cycles (15s each) + margin.
-		// Bridge sends heartbeats every 15s so we should receive data every cycle.
-		// 45s = 3 missed heartbeats → detect dead connections quickly rather than
-		// waiting 270s and leaving a stale handler blocking the team slot.
-		readCtx, readCancel := context.WithTimeout(ctx, 45*time.Second)
+		// Read timeout: 9 heartbeat cycles (10s each).
+		// Bridge sends heartbeats every 10s; 90s = 9 missed cycles before
+		// declaring the connection dead. Matches the bridge's own ack timeout
+		// so both sides detect failures at roughly the same time.
+		readCtx, readCancel := context.WithTimeout(ctx, 90*time.Second)
 		_, data, err := conn.ws.Read(readCtx)
 		readCancel()
 		if err != nil {

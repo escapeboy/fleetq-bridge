@@ -51,10 +51,10 @@ func DiscoverLLMs(ctx context.Context) []LLMEndpoint {
 			results[i] = ep
 			continue
 		}
-		defer resp.Body.Close()
 
 		ep.Online = true
 		ep.Models = parseModelList(resp, probe.modelField)
+		resp.Body.Close()
 		results[i] = ep
 	}
 

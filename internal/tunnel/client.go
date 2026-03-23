@@ -340,21 +340,9 @@ func (c *Client) heartbeat(ctx context.Context, conn *websocket.Conn) {
 				return
 			}
 
-			// WebSocket protocol-level ping — detects dead TCP connections at the
-			// transport layer, independent of application logic. conn.Ping blocks
-			// until the peer's pong is processed by our read loop or the context
-			// times out. This catches half-open TCP states that only surface on write.
-			pingCtx, pingCancel := context.WithTimeout(ctx, writeTimeout)
-			pingErr := conn.Ping(pingCtx)
-			pingCancel()
-			if pingErr != nil {
-				c.log.Warn("websocket ping failed, closing connection", zap.Error(pingErr))
-				conn.Close(websocket.StatusGoingAway, "ping failed")
-				return
-			}
-
 			// Application-level heartbeat for latency measurement and relay-side
-			// liveness tracking. Sent after the WS ping succeeds.
+			// liveness tracking. TCP keepalive (15s) detects dead connections at
+			// the OS/transport layer without blocking the heartbeat goroutine.
 			payload, _ := json.Marshal(map[string]int64{"ts": t.UnixMilli()})
 			frame := &Frame{Type: FrameHeartbeat, Payload: payload}
 			if err := c.sendFrame(ctx, conn, frame); err != nil {
