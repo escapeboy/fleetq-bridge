@@ -27,19 +27,24 @@ type Handler interface {
 
 const (
 	// heartbeatInterval is how often we send heartbeat pings.
-	// 15s keeps the connection alive below Cloudflare's 100s idle timeout.
-	heartbeatInterval = 15 * time.Second
+	// 10s is below typical NAT idle-table timeouts (often 30s for TCP),
+	// ensuring probes arrive before the NAT entry is evicted.
+	heartbeatInterval = 10 * time.Second
 
 	// heartbeatAckTimeout: if no ack arrives within this window, the connection is dead.
-	// 90s = 6 missed heartbeat cycles — tolerates transient relay backpressure.
+	// 90s = 9 missed heartbeat cycles — tolerates transient relay backpressure.
 	heartbeatAckTimeout = 90 * time.Second
 
 	// readTimeout: maximum time to wait for any data on the WebSocket.
-	// Heartbeats arrive every 15s and get ack'd, so 90s means ~6 missed heartbeat cycles.
+	// Heartbeats arrive every 10s and get ack'd, so 90s = ~9 missed cycles.
 	readTimeout = 90 * time.Second
 
 	// writeTimeout: maximum time for a single WebSocket write.
 	writeTimeout = 10 * time.Second
+
+	// connResetThreshold: if a connection lasted at least this long before dropping,
+	// reset backoff to minimum — it was a stable session, not a boot-loop.
+	connResetThreshold = 30 * time.Second
 )
 
 // Client manages the outbound WebSocket connection to the FleetQ relay.
@@ -81,9 +86,16 @@ func (c *Client) Run(ctx context.Context) {
 		default:
 		}
 
+		start := time.Now()
 		err := c.connect(ctx)
 		if ctx.Err() != nil {
 			return // context cancelled
+		}
+
+		// If the connection was live for a healthy period, reset backoff —
+		// this was a stable session that dropped, not a persistent boot-loop.
+		if time.Since(start) >= connResetThreshold {
+			backoff = 1 * time.Second
 		}
 
 		if err != nil {
@@ -156,11 +168,12 @@ func (c *Client) connect(ctx context.Context) error {
 	defer cancel()
 
 	// Use a custom dialer with TCP keepalive so the OS sends keepalive probes
-	// every 30s. This prevents home routers and cloud NAT tables from silently
-	// dropping the idle TCP connection between heartbeat exchanges.
+	// every 15s. This prevents home routers and cloud NAT tables from silently
+	// dropping the idle TCP connection. 15s is below the common 30s NAT idle
+	// timeout, ensuring the entry stays alive between application heartbeats.
 	netDialer := &net.Dialer{
 		Timeout:   15 * time.Second,
-		KeepAlive: 30 * time.Second,
+		KeepAlive: 15 * time.Second,
 	}
 	conn, _, err := websocket.Dial(dialCtx, c.relayURL, &websocket.DialOptions{
 		HTTPHeader: http.Header{
@@ -315,7 +328,7 @@ func (c *Client) heartbeat(ctx context.Context, conn *websocket.Conn) {
 		case <-ctx.Done():
 			return
 		case t := <-ticker.C:
-			// Check heartbeat ack timeout — if no ack in 45s, connection is dead
+			// Check application-level ack timeout first.
 			c.mu.Lock()
 			lastAck := c.lastHeartbeatAck
 			c.mu.Unlock()
@@ -327,11 +340,24 @@ func (c *Client) heartbeat(ctx context.Context, conn *websocket.Conn) {
 				return
 			}
 
+			// WebSocket protocol-level ping — detects dead TCP connections at the
+			// transport layer, independent of application logic. conn.Ping blocks
+			// until the peer's pong is processed by our read loop or the context
+			// times out. This catches half-open TCP states that only surface on write.
+			pingCtx, pingCancel := context.WithTimeout(ctx, writeTimeout)
+			pingErr := conn.Ping(pingCtx)
+			pingCancel()
+			if pingErr != nil {
+				c.log.Warn("websocket ping failed, closing connection", zap.Error(pingErr))
+				conn.Close(websocket.StatusGoingAway, "ping failed")
+				return
+			}
+
+			// Application-level heartbeat for latency measurement and relay-side
+			// liveness tracking. Sent after the WS ping succeeds.
 			payload, _ := json.Marshal(map[string]int64{"ts": t.UnixMilli()})
 			frame := &Frame{Type: FrameHeartbeat, Payload: payload}
 			if err := c.sendFrame(ctx, conn, frame); err != nil {
-				// Close the connection so the read loop detects the failure
-				// immediately instead of waiting up to readTimeout (90s).
 				c.log.Warn("heartbeat send failed, closing connection", zap.Error(err))
 				conn.Close(websocket.StatusGoingAway, "heartbeat send failed")
 				return
