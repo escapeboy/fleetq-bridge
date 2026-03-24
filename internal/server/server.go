@@ -291,20 +291,36 @@ func (s *Server) executeAgent(ctx context.Context, req *ExecuteRequest, sendChun
 	}()
 
 	dec := json.NewDecoder(pr)
+	outputEmitted := false
 	for {
 		var event executor.Event
 		if err := dec.Decode(&event); err != nil {
 			break
 		}
-		chunk := sseChunk{Chunk: event.Text}
-		if event.Kind == "done" {
-			chunk.Done = true
-			chunk.ExitCode = event.ExitCode
+		switch event.Kind {
+		case "output", "stream_event":
+			// Real content — forward as chunk.
+			outputEmitted = true
+			sendChunk(sseChunk{Chunk: event.Text})
+		case "result":
+			// Final full answer — only emit if no streaming output was produced yet
+			// (prevents duplicate when both stream_event and result carry the same text).
+			if !outputEmitted {
+				sendChunk(sseChunk{Chunk: event.Text})
+			}
+		case "done":
+			chunk := sseChunk{Done: true, ExitCode: event.ExitCode}
+			if event.Error != "" {
+				chunk.Error = event.Error
+			}
+			sendChunk(chunk)
+		case "progress":
+			// Progress/keepalive — skip, don't pollute the content stream.
+		default:
+			if event.Error != "" {
+				sendChunk(sseChunk{Error: event.Error, Done: true})
+			}
 		}
-		if event.Error != "" {
-			chunk.Error = event.Error
-		}
-		sendChunk(chunk)
 		if event.Kind == "done" {
 			break
 		}
