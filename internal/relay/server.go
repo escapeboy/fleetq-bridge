@@ -21,6 +21,7 @@ import (
 // Config holds relay server configuration.
 type Config struct {
 	APIURL      string // e.g. "https://fleetq.net"
+	APIHost     string // optional Host header override for internal routing (e.g. "fleetq.net" when APIURL=http://nginx)
 	RedisURL    string // e.g. "redis://redis:6379/0"
 	RedisPrefix string // e.g. "fleetq-" — prepended to all Redis keys (must match Laravel's REDIS_PREFIX)
 }
@@ -288,7 +289,7 @@ func (s *Server) pushResponse(ctx context.Context, frame *tunnel.Frame) error {
 	key := fmt.Sprintf("%sbridge:stream:%s", s.cfg.RedisPrefix, frame.RequestID)
 	pipe := s.rdb.Pipeline()
 	pipe.RPush(ctx, key, data)
-	pipe.Expire(ctx, key, 120*time.Second)
+	pipe.Expire(ctx, key, 10*time.Minute)
 	_, err = pipe.Exec(ctx)
 	return err
 }
@@ -298,6 +299,9 @@ func (s *Server) resolveTeam(ctx context.Context, apiKey string) (string, error)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.cfg.APIURL+"/api/v1/me", nil)
 	if err != nil {
 		return "", err
+	}
+	if s.cfg.APIHost != "" {
+		req.Host = s.cfg.APIHost
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Accept", "application/json")
@@ -382,6 +386,9 @@ func (s *Server) apiCall(apiKey, method, path string, body map[string]any) {
 	req, err := http.NewRequestWithContext(ctx, method, s.cfg.APIURL+path, bodyReader)
 	if err != nil {
 		return
+	}
+	if s.cfg.APIHost != "" {
+		req.Host = s.cfg.APIHost
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 	req.Header.Set("Content-Type", "application/json")
