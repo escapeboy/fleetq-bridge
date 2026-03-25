@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -103,7 +104,7 @@ func init() {
 	}
 }
 
-// DiscoverAgents probes all known agent binaries and returns their detection results.
+// DiscoverAgents probes all known agent binaries concurrently and returns their detection results.
 // binaryPaths is an optional map of agent key → explicit binary path that takes priority
 // over PATH-based discovery (e.g. from bridge.yaml agents.binary_paths config).
 func DiscoverAgents(ctx context.Context, enabled []string, binaryPaths map[string]string) []Agent {
@@ -112,14 +113,20 @@ func DiscoverAgents(ctx context.Context, enabled []string, binaryPaths map[strin
 		enabledSet[k] = true
 	}
 
-	results := make([]Agent, 0, len(KnownAgents))
-	for _, def := range KnownAgents {
+	results := make([]Agent, len(KnownAgents))
+	var wg sync.WaitGroup
+	for i, def := range KnownAgents {
 		if len(enabled) > 0 && !enabledSet[def.Key] {
-			results = append(results, Agent{AgentDef: def})
+			results[i] = Agent{AgentDef: def}
 			continue
 		}
-		results = append(results, probeAgent(ctx, def, binaryPaths[def.Key]))
+		wg.Add(1)
+		go func(idx int, d AgentDef) {
+			defer wg.Done()
+			results[idx] = probeAgent(ctx, d, binaryPaths[d.Key])
+		}(i, def)
 	}
+	wg.Wait()
 	return results
 }
 
@@ -162,6 +169,9 @@ func probeAgent(ctx context.Context, def AgentDef, explicitPath string) Agent {
 	a.Found = true
 
 	// Get version with a short timeout.
+	// WaitDelay ensures that if the binary spawns background child processes
+	// (e.g. daemons), cmd.Output() does not hang indefinitely waiting for
+	// the stdout pipe to close — orphaned children are killed after the delay.
 	vCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -169,7 +179,9 @@ func probeAgent(ctx context.Context, def AgentDef, explicitPath string) Agent {
 	if len(args) == 0 {
 		args = []string{"--version"}
 	}
-	out, err := exec.CommandContext(vCtx, binPath, args...).Output()
+	cmd := exec.CommandContext(vCtx, binPath, args...)
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.Output()
 	if err == nil {
 		a.Version = strings.TrimSpace(firstLine(string(out)))
 	}

@@ -27,17 +27,17 @@ type Handler interface {
 
 const (
 	// heartbeatInterval is how often we send heartbeat pings.
-	// 10s is below typical NAT idle-table timeouts (often 30s for TCP),
+	// 5s is well below typical NAT idle-table timeouts (often 30–120s for TCP),
 	// ensuring probes arrive before the NAT entry is evicted.
-	heartbeatInterval = 10 * time.Second
+	heartbeatInterval = 5 * time.Second
 
 	// heartbeatAckTimeout: if no ack arrives within this window, the connection is dead.
-	// 90s = 9 missed heartbeat cycles — tolerates transient relay backpressure.
-	heartbeatAckTimeout = 90 * time.Second
+	// 30s = 6 missed heartbeat cycles — tolerates transient relay backpressure.
+	heartbeatAckTimeout = 30 * time.Second
 
 	// readTimeout: maximum time to wait for any data on the WebSocket.
-	// Heartbeats arrive every 10s and get ack'd, so 90s = ~9 missed cycles.
-	readTimeout = 90 * time.Second
+	// Heartbeats arrive every 5s and get ack'd, so 30s = ~6 missed cycles.
+	readTimeout = 30 * time.Second
 
 	// writeTimeout: maximum time for a single WebSocket write.
 	writeTimeout = 10 * time.Second

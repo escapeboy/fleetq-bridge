@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -29,34 +30,40 @@ var defaultLLMProbes = []struct {
 	{"GPT4All", "http://localhost:4891", "/v1/models", "data"},
 }
 
-// DiscoverLLMs probes all known local LLM endpoints and returns the live ones.
+// DiscoverLLMs probes all known local LLM endpoints concurrently and returns the results.
 func DiscoverLLMs(ctx context.Context) []LLMEndpoint {
 	client := &http.Client{Timeout: 2 * time.Second}
 	results := make([]LLMEndpoint, len(defaultLLMProbes))
 
+	var wg sync.WaitGroup
 	for i, probe := range defaultLLMProbes {
-		ep := LLMEndpoint{
-			Name:    probe.name,
-			BaseURL: probe.baseURL,
-		}
+		wg.Add(1)
+		go func(idx int, p struct {
+			name       string
+			baseURL    string
+			healthPath string
+			modelField string
+		}) {
+			defer wg.Done()
+			ep := LLMEndpoint{Name: p.name, BaseURL: p.baseURL}
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, probe.baseURL+probe.healthPath, nil)
-		if err != nil {
-			results[i] = ep
-			continue
-		}
-
-		resp, err := client.Do(req)
-		if err != nil || resp.StatusCode != http.StatusOK {
-			results[i] = ep
-			continue
-		}
-
-		ep.Online = true
-		ep.Models = parseModelList(resp, probe.modelField)
-		resp.Body.Close()
-		results[i] = ep
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+p.healthPath, nil)
+			if err != nil {
+				results[idx] = ep
+				return
+			}
+			resp, err := client.Do(req)
+			if err != nil || resp.StatusCode != http.StatusOK {
+				results[idx] = ep
+				return
+			}
+			ep.Online = true
+			ep.Models = parseModelList(resp, p.modelField)
+			resp.Body.Close()
+			results[idx] = ep
+		}(i, probe)
 	}
+	wg.Wait()
 
 	return results
 }
