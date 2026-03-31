@@ -302,9 +302,22 @@ func (r *Runner) OnAgentRequest(ctx context.Context, req *tunnel.AgentRequest, s
 			// Don't break — keep reading events so we can send them
 			// once the connection is re-established.
 			if event.Kind == "done" {
-				// Final event: retry once after a brief pause
-				time.Sleep(2 * time.Second)
-				_ = send(f)
+				// Final event: retry with exponential backoff (2s, 4s, 8s, 16s)
+				// so the result is delivered even after a longer network hiccup.
+				for attempt := 0; attempt < 4; attempt++ {
+					wait := time.Duration(2<<attempt) * time.Second
+					time.Sleep(wait)
+					if err := send(f); err == nil {
+						r.log.Info("done event delivered on retry",
+							zap.String("request_id", req.RequestID),
+							zap.Int("attempt", attempt+1))
+						break
+					}
+					r.log.Warn("done event retry failed",
+						zap.String("request_id", req.RequestID),
+						zap.Int("attempt", attempt+1),
+						zap.Error(err))
+				}
 				break
 			}
 			continue

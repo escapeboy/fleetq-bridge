@@ -32,12 +32,15 @@ const (
 	heartbeatInterval = 5 * time.Second
 
 	// heartbeatAckTimeout: if no ack arrives within this window, the connection is dead.
-	// 30s = 6 missed heartbeat cycles — tolerates transient relay backpressure.
-	heartbeatAckTimeout = 30 * time.Second
+	// 90s = 18 missed heartbeat cycles — tolerates longer network hiccups on
+	// unstable home networks without dropping the connection prematurely.
+	heartbeatAckTimeout = 90 * time.Second
 
 	// readTimeout: maximum time to wait for any data on the WebSocket.
-	// Heartbeats arrive every 5s and get ack'd, so 30s = ~6 missed cycles.
-	readTimeout = 30 * time.Second
+	// Heartbeats arrive every 5s and get ack'd. 90s = ~18 missed cycles,
+	// tolerating longer network hiccups (home NAT flaps, WiFi drops) without
+	// disconnecting. TCP keepalive (15s) catches truly dead connections faster.
+	readTimeout = 90 * time.Second
 
 	// writeTimeout: maximum time for a single WebSocket write.
 	writeTimeout = 10 * time.Second
@@ -110,10 +113,11 @@ func (c *Client) Run(ctx context.Context) {
 		case <-time.After(backoff):
 		}
 
-		// Exponential backoff with jitter: base 1s, max 60s, multiplier 1.5
+		// Exponential backoff with jitter: base 1s, max 30s, multiplier 1.5
+		// Capped at 30s (was 60s) to reconnect faster on unstable networks.
 		backoff = time.Duration(math.Min(
 			float64(backoff)*1.5*(0.8+rand.Float64()*0.4),
-			float64(60*time.Second),
+			float64(30*time.Second),
 		))
 	}
 }

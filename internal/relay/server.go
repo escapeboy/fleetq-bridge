@@ -112,7 +112,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		SessionID: sessionID,
 		apiKey:    apiKey,
 		ws:        ws,
-		send:      make(chan []byte, 64),
+		send:      make(chan []byte, 512),
 		cancel:    cancel,
 	}
 
@@ -130,7 +130,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		s.hub.Unregister(conn)
 		ws.CloseNow()
 		s.log.Info("bridge disconnected", zap.String("team_id", teamID))
-		go s.unregisterConnection(teamID, apiKey)
+		go s.unregisterConnection(sessionID, apiKey)
 	}()
 
 	// Three concurrent goroutines: read, write, and Redis pump
@@ -156,11 +156,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // readLoop reads frames from the daemon and handles them.
 func (s *Server) readLoop(ctx context.Context, conn *Conn) error {
 	for {
-		// Read timeout: 6 heartbeat cycles (5s each).
-		// Bridge sends heartbeats every 5s; 30s = 6 missed cycles before
-		// declaring the connection dead. Matches the bridge's own ack timeout
-		// so both sides detect failures at roughly the same time.
-		readCtx, readCancel := context.WithTimeout(ctx, 30*time.Second)
+		// Read timeout: 18 heartbeat cycles (5s each).
+		// Bridge sends heartbeats every 5s; 90s tolerates transient NAT/network
+		// hiccups that briefly pause the heartbeat stream without the connection
+		// actually being dead. Bridge heartbeatAckTimeout is also 90s, so both
+		// sides have symmetric tolerance for network interruptions.
+		readCtx, readCancel := context.WithTimeout(ctx, 90*time.Second)
 		_, data, err := conn.ws.Read(readCtx)
 		readCancel()
 		if err != nil {
@@ -350,8 +351,12 @@ func (s *Server) registerConnection(sessionID, apiKey string) {
 }
 
 // unregisterConnection notifies Laravel that the bridge disconnected.
-func (s *Server) unregisterConnection(teamID, apiKey string) {
-	s.apiCall(apiKey, "DELETE", "/api/v1/bridge", nil)
+// Passes session_id so the server can reject stale disconnects that arrive
+// after a new session has already registered (reconnect race condition).
+func (s *Server) unregisterConnection(sessionID, apiKey string) {
+	s.apiCall(apiKey, "DELETE", "/api/v1/bridge", map[string]any{
+		"session_id": sessionID,
+	})
 }
 
 // updateEndpoints sends the discover manifest to Laravel.
