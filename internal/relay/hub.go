@@ -19,6 +19,23 @@ type Conn struct {
 	ws        *websocket.Conn
 	send      chan []byte
 	cancel    context.CancelFunc
+
+	// hbMu guards lastHeartbeatForward.
+	hbMu                 sync.Mutex
+	lastHeartbeatForward time.Time
+}
+
+// ShouldForwardHeartbeat returns true and stamps "now" if the last forward
+// to the FleetQ API happened more than `interval` ago. Throttles cloud-side
+// heartbeat HTTP calls so a 5s WS heartbeat does not produce 12 HTTP calls/min.
+func (c *Conn) ShouldForwardHeartbeat(interval time.Duration) bool {
+	c.hbMu.Lock()
+	defer c.hbMu.Unlock()
+	if time.Since(c.lastHeartbeatForward) < interval {
+		return false
+	}
+	c.lastHeartbeatForward = time.Now()
+	return true
 }
 
 // SendFrame encodes a frame and queues it for delivery.

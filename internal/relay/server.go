@@ -185,10 +185,24 @@ func (s *Server) readLoop(ctx context.Context, conn *Conn) error {
 	}
 }
 
+// heartbeatForwardInterval throttles how often the relay POSTs the WS heartbeat
+// to the FleetQ API. Bridge daemon sends a WS heartbeat every 5s; we forward it
+// every 60s to keep `BridgeConnection.last_seen_at` fresh without flooding the
+// API with 12 requests/min per connection. The cloud `bridge:detect-stale`
+// command uses a 600s threshold, so 60s leaves a 10x safety margin.
+const heartbeatForwardInterval = 60 * time.Second
+
 // handleFrame dispatches an incoming frame from the daemon.
 func (s *Server) handleFrame(ctx context.Context, conn *Conn, frame *tunnel.Frame) error {
 	switch frame.Type {
 	case tunnel.FrameHeartbeat:
+		// Forward to FleetQ API to refresh `last_seen_at`. Without this the
+		// cloud only learns the bridge is alive on initial /bridge/register,
+		// and `bridge:detect-stale` marks healthy WS connections as
+		// disconnected after the threshold elapses (defaults: 600s).
+		if conn.ShouldForwardHeartbeat(heartbeatForwardInterval) {
+			go s.forwardHeartbeat(conn)
+		}
 		// Echo back as ack
 		ack := &tunnel.Frame{Type: tunnel.FrameHeartbeatAck, RequestID: frame.RequestID, Payload: frame.Payload}
 		return conn.SendFrame(ack)
@@ -348,6 +362,17 @@ func (s *Server) registerConnection(sessionID, apiKey string) {
 		"bridge_version": "relay/1.0",
 	}
 	s.apiCall(apiKey, "POST", "/api/v1/bridge/register", body)
+}
+
+// forwardHeartbeat refreshes `last_seen_at` on the FleetQ API for the bridge's
+// session. Called from handleFrame on FrameHeartbeat, throttled by
+// Conn.ShouldForwardHeartbeat. Failures are logged at debug level — a transient
+// API hiccup will be retried on the next forward interval.
+func (s *Server) forwardHeartbeat(conn *Conn) {
+	body := map[string]any{
+		"session_id": conn.SessionID,
+	}
+	s.apiCall(conn.apiKey, "POST", "/api/v1/bridge/heartbeat", body)
 }
 
 // unregisterConnection notifies Laravel that the bridge disconnected.

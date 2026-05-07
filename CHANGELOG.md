@@ -7,6 +7,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [0.5.3] — 2026-05-07
+
+### Fixed
+
+- **Relay forwards heartbeat to FleetQ API** — the relay now POSTs `/api/v1/bridge/heartbeat` (throttled to once per 60s per session) whenever the bridge daemon's WS heartbeat arrives. Previously the heartbeat was only echoed locally between daemon and relay, so the cloud `BridgeConnection.last_seen_at` was only refreshed on `/bridge/register` (i.e. once per WebSocket lifetime). This caused `bridge:detect-stale` (default threshold 600s) to mark healthy long-lived connections as `disconnected` ~10 minutes after connect, surfacing as `FleetQ Bridge is not connected` errors on agent / OCR endpoints despite the WebSocket being fully alive. The only previous workaround was killing and restarting the daemon. Bridge daemon itself is unchanged — auto-reconnect logic shipped in 0.5.0–0.5.2 was already correct.
+
+---
+
 ## [0.5.2] — 2026-03-22
 
 ### Fixed
