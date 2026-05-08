@@ -58,11 +58,15 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 		args = append(args, "--tools", "")
 	}
 
-	// Auto-inject bridge MCP servers via --mcp-config so Claude Code subprocesses
-	// have access to bridge-managed MCP servers (playwright, filesystem, etc.)
-	// without requiring manual configuration by the user.
-	if len(e.mcpServers) > 0 {
-		mcpPath, err := writeTempMCPConfig(e.mcpServers)
+	// Auto-inject MCP servers via --mcp-config so the spawned Claude Code
+	// process can reach them. Combines:
+	//   1. bridge-static servers configured at boot (e.mcpServers) — typically
+	//      filesystem / playwright shipped by the bridge admin.
+	//   2. per-request servers translated from the FleetQ agent's attached
+	//      tools (req.MCPServers). Per-request entries shadow static entries
+	//      on key collision so a tool override at the agent level wins.
+	if len(e.mcpServers) > 0 || len(req.MCPServers) > 0 {
+		mcpPath, err := writeTempMCPConfig(e.mcpServers, req.MCPServers)
 		if err != nil {
 			log.Printf("[executor] failed to write MCP config: %v request=%s", err, req.ID)
 		} else {
@@ -158,11 +162,15 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, req *Request, out io.Write
 }
 
 // writeTempMCPConfig writes a Claude Code --mcp-config JSON file to a temp path
-// containing all provided bridge MCP servers. Returns the temp file path.
-func writeTempMCPConfig(servers []config.MCPServer) (string, error) {
+// containing the union of bridge-static and per-request MCP servers. Per-request
+// entries (perRequest) shadow static entries (static) on key collision. Returns
+// the temp file path.
+func writeTempMCPConfig(static []config.MCPServer, perRequest map[string]MCPServerEntry) (string, error) {
 	type mcpServerEntry struct {
-		Type    string            `json:"type"`
-		Command string            `json:"command"`
+		Type    string            `json:"type,omitempty"`
+		URL     string            `json:"url,omitempty"`
+		Headers map[string]string `json:"headers,omitempty"`
+		Command string            `json:"command,omitempty"`
 		Args    []string          `json:"args,omitempty"`
 		Env     map[string]string `json:"env,omitempty"`
 	}
@@ -170,8 +178,9 @@ func writeTempMCPConfig(servers []config.MCPServer) (string, error) {
 		MCPServers map[string]mcpServerEntry `json:"mcpServers"`
 	}
 
-	cfg := mcpConfig{MCPServers: make(map[string]mcpServerEntry, len(servers))}
-	for _, s := range servers {
+	cfg := mcpConfig{MCPServers: make(map[string]mcpServerEntry, len(static)+len(perRequest))}
+
+	for _, s := range static {
 		if s.Command == "" {
 			continue
 		}
@@ -189,6 +198,22 @@ func writeTempMCPConfig(servers []config.MCPServer) (string, error) {
 			}
 		}
 		cfg.MCPServers[s.Name] = entry
+	}
+
+	for name, e := range perRequest {
+		// http entries require URL; stdio entries require Command. Drop
+		// malformed entries silently to match the static-config behavior.
+		if e.URL == "" && e.Command == "" {
+			continue
+		}
+		cfg.MCPServers[name] = mcpServerEntry{
+			Type:    e.Type,
+			URL:     e.URL,
+			Headers: e.Headers,
+			Command: e.Command,
+			Args:    e.Args,
+			Env:     e.Env,
+		}
 	}
 
 	if len(cfg.MCPServers) == 0 {

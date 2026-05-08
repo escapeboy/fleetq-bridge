@@ -32,6 +32,10 @@ type ExecuteRequest struct {
 	TimeoutSeconds   int               `json:"timeout_seconds"`
 	Env              map[string]string `json:"env"`
 	Stream           bool              `json:"stream"`
+	// MCPServers — see executor.Request.MCPServers. Forwarded from FleetQ.
+	// Older FleetQ versions omit the field; bridges built before this field
+	// existed silently dropped it. Both directions are backward compatible.
+	MCPServers map[string]executor.MCPServerEntry `json:"mcp_servers,omitempty"`
 	// LLM fields (when agent_key is empty)
 	Messages    []map[string]any `json:"messages"`
 	MaxTokens   int              `json:"max_tokens"`
@@ -277,6 +281,7 @@ func (s *Server) executeAgent(ctx context.Context, req *ExecuteRequest, sendChun
 		TimeoutSeconds:   req.TimeoutSeconds,
 		Env:              req.Env,
 		Stream:           true,
+		MCPServers:       req.MCPServers,
 	}
 	if exReq.WorkingDirectory == "" {
 		exReq.WorkingDirectory = s.cfg.Agents.WorkingDirectory
