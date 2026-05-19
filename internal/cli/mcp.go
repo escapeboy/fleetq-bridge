@@ -112,7 +112,7 @@ func newMCPListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List configured MCP servers",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
+			cfg, err := config.LoadFrom(configFile)
 			if err != nil {
 				return err
 			}
